@@ -19,7 +19,7 @@ services:
       # === Caps (you can tweak) ===
       # autosizer service env
       CAP_SHORT:  '{"num_predict":80,"num_ctx":1024,"temperature":0.6,"top_p":0.9,"top_k":40,"repeat_penalty":1.25,"stop":["<|im_end|>","\n\n","```","\nUser:","\nAssistant:","<|im_start|>user","<|im_start|>assistant"]}'
-      CAP_NORMAL: '{"num_predict":384,"num_ctx":2048,"temperature":0.7,"top_p":0.92,"top_k":40,"repeat_penalty":1.2,"stop":["<|im_end|>","\n\n","```","\nUser:","\nAssistant:","<|im_start|>user","<|im_start|>assistant"]}'
+      CAP_NORMAL: '{"num_predict":384,"num_ctx":2048,"temperature":0.7,"top_p":0.92,"top_k":40,"repeat_penalty":1.2,"stop":["<|im_end|>","```"]}'
       CAP_DEEP:   '{"num_predict":768,"num_ctx":2048,"temperature":0.7,"repeat_penalty":1.1}'
 
       GUNICORN_CMD_ARGS: >-

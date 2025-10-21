@@ -15,6 +15,28 @@ from .config import (
 )
 
 
+DETAIL_KEYWORDS = {
+    "example",
+    "examples",
+    "compare",
+    "comparison",
+    "contrast",
+    "advantages",
+    "disadvantages",
+    "benefits",
+    "best",
+    "pros",
+    "cons",
+    "explain",
+    "explanation",
+    "why",
+    "how",
+    "detailed",
+    "detail",
+    "step-by-step",
+}
+
+
 def has_rag(body: Dict[str, Any]) -> bool:
     return bool(body.get("files") or body.get("collection") or body.get("collections"))
 
@@ -62,9 +84,17 @@ def choose_caps(body: Dict[str, Any]) -> Dict[str, Any]:
 
     excerpt = _prompt_excerpt(body)
     n = len(excerpt.split())
+
+    lower_excerpt = excerpt.lower()
+    wants_detail = any(keyword in lower_excerpt for keyword in DETAIL_KEYWORDS)
+
     if n <= SHORT_MAX:
+        if wants_detail:
+            return _caps_with_mode(CAP_NORMAL, "normal")
         return _caps_with_mode(CAP_SHORT, "short")
     if n <= NORMAL_MAX:
+        if wants_detail:
+            return _caps_with_mode(CAP_DEEP, "deep")
         return _caps_with_mode(CAP_NORMAL, "normal")
     return _caps_with_mode(CAP_DEEP, "deep")
 
