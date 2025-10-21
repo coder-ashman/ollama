@@ -1,0 +1,80 @@
+services:
+  autosizer:
+    build: ./autosizer
+    container_name: autosizer
+    restart: unless-stopped
+    ports:
+      - "8089:8089"  # optional: host debug access
+    environment:
+      # === Point to your Ollama ===
+      TARGET_OLLAMA: "http://host.lima.internal:11434"   # host-native (Rancher)
+      # TARGET_OLLAMA: "http://ollama:11434"             # if Ollama is a container
+
+      # === Auto-sizing thresholds ===
+      SHORT_MAX_WORDS: "12"
+      NORMAL_MAX_WORDS: "60"
+
+      # === Caps (you can tweak) ===
+      # autosizer service env
+      CAP_SHORT:  '{"num_predict":80,"num_ctx":1024,"temperature":0.6,"repeat_penalty":1.25,"stop":["<|im_end|>","\n\n","```"]}'
+      CAP_NORMAL: '{"num_predict":384,"num_ctx":2048,"temperature":0.7,"repeat_penalty":1.2}'
+      CAP_DEEP:   '{"num_predict":768,"num_ctx":2048,"temperature":0.7,"repeat_penalty":1.1}'
+
+      GUNICORN_CMD_ARGS: >-
+        --timeout 300 -k gthread --threads 4 -w 2 -b 0.0.0.0:8089
+        --access-logfile - --error-logfile - --log-level info
+
+    extra_hosts:
+      - "host.lima.internal:192.168.5.2"
+
+    networks:
+      - no_inet
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant:/qdrant/storage
+    networks:
+      - no_inet
+    cpus: ".8"
+    mem_limit: "4g"
+    mem_reservation: "2g"
+    memswap_limit: "4g"
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: openwebui
+    restart: unless-stopped
+    ports:
+      - "3000:8080"                   # http://localhost:3000
+    environment:
+      OLLAMA_BASE_URL: "http://autosizer:8089"
+      VECTOR_DB: "qdrant"
+      QDRANT_URI: "http://qdrant:6333"
+      ENABLE_RAG_HYBRID_SEARCH: "true"
+      QDRANT_COLLECTION_PREFIX: "ai_stack"
+      # Optional file size knobs for uploads
+      # RAG_FILE_MAX_SIZE: "200MB"
+      RAG_ALLOWED_FILE_EXTENSIONS: "js,ts,tsx,md,json,yaml,yml,py,go,java,cs,rb,php,rs,cpp,cc,c,kt,swift,sql"
+    extra_hosts:
+      - "host.lima.internal:192.168.5.2"
+    volumes:
+      - ./openwebui:/app/backend/data
+    depends_on:
+      - autosizer
+      - qdrant
+    networks:
+      - no_inet
+    cpus: ".5"
+    mem_limit: "1.5g"
+    mem_reservation: "1g"
+    memswap_limit: "1.5g"
+
+networks:
+  no_inet:
+    driver: bridge
+    #internal: true    # blocks container egress; host can still reach published ports
