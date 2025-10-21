@@ -29,6 +29,7 @@ CAP_DEEP   = json.loads(os.environ.get(
 
 app = Flask(__name__)
 _SENT_SPLIT = re.compile(r'(?<=[\.\!\?。！？])\s+')
+END_PUNCT = (".", "?", "!", "。", "！", "？", "...")
 TAIL_TOKENS = int(os.environ.get("TAIL_TOKENS", "0"))
 CHARS_PER_TOKEN = float(os.environ.get("CHARS_PER_TOKEN", "4.0"))
 SHORT_SENTENCES = int(os.environ.get("SHORT_SENTENCES", "2"))
@@ -185,24 +186,90 @@ def inject_concise_system(body: dict, chosen: dict) -> dict:
 
 
 def stream_upstream(method: str, path: str, *, json_body=None, data=None, headers=None, params=None):
-    """Proxy to Ollama with chunked streaming; no full buffering."""
+    """Proxy to Ollama with chunked streaming and graceful cutoff polish."""
     url = f"{OLLAMA}{path}"
     r = requests.request(
-        method, url,
-        json=json_body, data=data,
-        headers=headers, params=params,
+        method,
+        url,
+        json=json_body,
+        data=data,
+        headers=headers,
+        params=params,
         stream=True,
-        timeout=(10, READ_TIMEOUT)  # (connect, read)
+        timeout=(10, READ_TIMEOUT),  # (connect, read)
     )
 
-    # Drop content-length so chunked transfer works
     resp_headers = [(k, v) for k, v in r.headers.items() if k.lower() != "content-length"]
 
     def gen():
+        full_response_parts: list[str] = []
+        pending_bytes: Optional[bytes] = None
+        pending_parsed: Optional[Dict[str, Any]] = None
+
         try:
-            for chunk in r.iter_content(chunk_size=8192):
-                if chunk:
-                    yield chunk
+            for raw_line in r.iter_lines(chunk_size=8192, decode_unicode=False):
+                if raw_line is None:
+                    continue
+
+                if pending_bytes is not None:
+                    yield pending_bytes
+
+                pending_bytes = raw_line + b"\n"
+                pending_parsed = None
+
+                try:
+                    parsed = json.loads(raw_line.decode("utf-8", errors="ignore"))
+                except Exception:
+                    continue
+
+                pending_parsed = parsed
+                piece = parsed.get("response")
+                if isinstance(piece, str):
+                    full_response_parts.append(piece)
+
+            if pending_bytes is not None:
+                if isinstance(pending_parsed, dict) and pending_parsed.get("done") and pending_parsed.get("done_reason") == "length":
+                    full_text = "".join(full_response_parts)
+                    cleaned = full_text.strip()
+                    bounded = trim_to_boundary(cleaned)
+                    if bounded:
+                        cleaned = bounded.strip()
+                    if not cleaned:
+                        cleaned = full_text.strip()
+                    if cleaned and not cleaned.endswith(END_PUNCT):
+                        cleaned = f"{cleaned} ..."
+
+                    original_piece = pending_parsed.get("response") if isinstance(pending_parsed, dict) else ""
+                    original_piece = original_piece if isinstance(original_piece, str) else ""
+
+                    tail = ""
+                    if cleaned.startswith(full_text):
+                        tail = cleaned[len(full_text):]
+
+                    combined_piece = f"{original_piece}{tail}" if original_piece or tail else ""
+
+                    if combined_piece:
+                        tail_chunk: Dict[str, Any] = {
+                            "response": combined_piece,
+                            "done": False,
+                        }
+                        if isinstance(pending_parsed, dict):
+                            for meta_key in ("model", "created_at", "conversation_id", "id"):
+                                if meta_key in pending_parsed:
+                                    tail_chunk[meta_key] = pending_parsed[meta_key]
+                        yield (json.dumps(tail_chunk) + "\n").encode("utf-8")
+
+                    final_chunk = dict(pending_parsed)
+                    if isinstance(final_chunk.get("message"), dict):
+                        msg = dict(final_chunk["message"])
+                        msg["content"] = cleaned
+                        final_chunk["message"] = msg
+
+                    final_chunk["response"] = ""
+                    yield (json.dumps(final_chunk) + "\n").encode("utf-8")
+                    app.logger.info("FINISH stream cutoff tail=%s", tail.strip() if tail else "")
+                else:
+                    yield pending_bytes
         finally:
             r.close()
 
@@ -210,7 +277,7 @@ def stream_upstream(method: str, path: str, *, json_body=None, data=None, header
         stream_with_context(gen()),
         status=r.status_code,
         headers=resp_headers,
-        mimetype=r.headers.get("Content-Type", "application/json")
+        mimetype=r.headers.get("Content-Type", "application/json"),
     )
 
 def nonstream_upstream(
@@ -236,9 +303,15 @@ def nonstream_upstream(
             payload = r.json()
         except ValueError:
             payload = None
-        if isinstance(payload, dict) and apply_short_response_finisher(payload, trim_config):
-            payload_bytes = json.dumps(payload).encode("utf-8")
-            resp_headers = [(k, v) for k, v in resp_headers if k.lower() != "content-length"]
+        if isinstance(payload, dict):
+            modified = False
+            if trim_config and apply_short_response_finisher(payload, trim_config):
+                modified = True
+            if apply_length_cutoff_finisher(payload):
+                modified = True
+            if modified:
+                payload_bytes = json.dumps(payload).encode("utf-8")
+                resp_headers = [(k, v) for k, v in resp_headers if k.lower() != "content-length"]
 
     return Response(payload_bytes, status=r.status_code, headers=resp_headers,
                     mimetype=mimetype)
@@ -367,6 +440,40 @@ def apply_short_response_finisher(payload: Dict[str, Any], config: Dict[str, Any
             config.get("sentences"),
             config.get("tail_tokens"),
         )
+    return changed
+
+
+def apply_length_cutoff_finisher(payload: Dict[str, Any]) -> bool:
+    if payload.get("done_reason") != "length":
+        return False
+
+    changed = False
+
+    def _tidy(value: Optional[str]) -> Optional[str]:
+        if not isinstance(value, str):
+            return value
+        trimmed = trim_to_boundary(value)
+        if trimmed != value:
+            return f"{trimmed} ..."
+        if trimmed and not trimmed.endswith(END_PUNCT):
+            return f"{trimmed} ..."
+        return trimmed
+
+    if "response" in payload:
+        cleaned = _tidy(payload.get("response"))
+        if cleaned is not None and cleaned != payload.get("response"):
+            payload["response"] = cleaned
+            changed = True
+
+    message = payload.get("message")
+    if isinstance(message, dict) and "content" in message:
+        cleaned = _tidy(message.get("content"))
+        if cleaned is not None and cleaned != message.get("content"):
+            message["content"] = cleaned
+            changed = True
+
+    if changed:
+        app.logger.info("FINISH cutoff done_reason=length")
     return changed
 
 
