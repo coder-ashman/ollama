@@ -34,7 +34,7 @@ FALLBACK_7B = os.getenv("FALLBACK_7B", "qwen2.5-7b-instruct-q5_K_M")
 
 DEFAULT_SYSTEM_SHORT = os.getenv(
     "DEFAULT_SYSTEM_SHORT",
-    "Be brief. Answer in 1–3 sentences unless asked for more.",
+    "Be brief. Answer in 1-2 sentences in plain English. Do not write code unless explicitly asked. Do not start a new question or new turn. Finish your final sentence.",
 )
 
 INF = 10 ** 9
