@@ -1,6 +1,8 @@
 services:
   autosizer:
-    build: ./autosizer
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: autosizer
     restart: unless-stopped
     ports:

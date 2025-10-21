@@ -11,6 +11,7 @@ COPY wheels/ /wheels/
 RUN pip install --no-cache-dir --no-index --find-links=/wheels flask requests gunicorn
 
 # App
+COPY autosizer_proxy/ ./autosizer_proxy/
 COPY app.py .
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8089
