@@ -1,0 +1,9 @@
+Added env-configurable short-response controls (caps, tail window, sentence clamp) and RAG-aware cap selection so short/no-RAG traffic is detected cleanly while fixing the malformed default short-cap JSON (app.py:19, app.py:45, app.py:55).
+Implemented structured trim planning and finishing helpers that cap non-stream replies to N sentences, optionally add tail tokens, and trim to natural boundaries before returning to the client (app.py:234, app.py:275, app.py:297, app.py:323).
+Updated the non-stream proxy path to parse Ollama JSON, apply the finisher, and drop Content-Length when rewriting bodies; streaming still passthroughs untouched (app.py:191).
+Consolidated /api/chat and /api/generate handling through a single request path that applies downgrades, clamps, concise-system injection, and short finishing while keeping logging focused on mode/caps (app.py:348, app.py:408, app.py:413).
+Tests: python -m compileall app.py
+
+Next steps:
+
+Issue a short stream:false chat through Open WebUI to confirm logs show FINISH and the reply ends within the configured sentence limit.
