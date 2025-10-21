@@ -52,19 +52,44 @@ def _caps_with_mode(template: Dict[str, Any], mode: str) -> Dict[str, Any]:
     return data
 
 
+def _collapse_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return _collapse_content(value.get("text") or "")
+    if isinstance(value, list):
+        return " ".join(_collapse_content(v) for v in value)
+    return str(value or "")
+
+
+def _chat_prompt_excerpt(messages: Any) -> str:
+    if not isinstance(messages, list):
+        return ""
+
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content = _collapse_content(msg.get("content"))
+            if content.strip():
+                return content.strip()
+    return " ".join(
+        _collapse_content(m.get("content")) for m in messages if m.get("role") == "user"
+    ).strip()
+
+
+def _prompt_excerpt(body: Dict[str, Any]) -> str:
+    prompt = (body.get("prompt") or "").strip()
+    if prompt:
+        return prompt
+    return _chat_prompt_excerpt(body.get("messages"))
+
+
 def choose_caps(body: Dict[str, Any]) -> Dict[str, Any]:
     """Pick caps based on prompt length or RAG signals."""
-    prompt = (body.get("prompt") or "").strip()
-    if not prompt and isinstance(body.get("messages"), list):
-        # crude collapse of user messages for chat payloads
-        prompt = " ".join(
-            m.get("content", "") for m in body["messages"] if m.get("role") == "user"
-        )
-
     if has_rag(body):
         return _caps_with_mode(CAP_DEEP, "deep")
 
-    n = len(prompt.split())
+    excerpt = _prompt_excerpt(body)
+    n = len(excerpt.split())
     if n <= SHORT_MAX:
         return _caps_with_mode(CAP_SHORT, "short")
     if n <= NORMAL_MAX:
