@@ -1,9 +1,55 @@
 import json
+import logging
 import os
 
 
+logger = logging.getLogger("autosizer.config")
+
+
 def _load_cap(env_var: str, default_json: str) -> dict:
-    return json.loads(os.environ.get(env_var, default_json))
+    default_value = json.loads(default_json)
+    raw = os.environ.get(env_var)
+    if not raw:
+        return default_value
+
+    raw = raw.strip()
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        sanitized = raw.replace("\r\n", "\n").replace("\r", "\n")
+        sanitized = sanitized.replace("\n", "\\n")
+        if sanitized != raw:
+            try:
+                parsed = json.loads(sanitized)
+            except json.JSONDecodeError as sanitized_exc:
+                logger.warning(
+                    "Invalid JSON for %s override; falling back to default. error=%s; sanitized_error=%s",
+                    env_var,
+                    exc,
+                    sanitized_exc,
+                )
+            else:
+                logger.warning(
+                    "Sanitized newline characters in %s override after JSON error: %s",
+                    env_var,
+                    exc,
+                )
+                return parsed
+        else:
+            logger.warning(
+                "Invalid JSON for %s override; falling back to default. error=%s",
+                env_var,
+                exc,
+            )
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.warning(
+            "Unexpected error parsing %s override; falling back to default. error=%s",
+            env_var,
+            exc,
+        )
+
+    return default_value
 
 
 OLLAMA = os.environ.get("TARGET_OLLAMA", "http://ollama:11434")

@@ -1,0 +1,6 @@
+.git
+__pycache__/
+*.pyc
+codex_log.txt
+openwebui
+qdrant
