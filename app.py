@@ -1,7 +1,10 @@
-import os, json
-from flask import Flask, request, Response, stream_with_context
-import requests
+import json
+import os
 import re
+from typing import Any, Dict, Optional
+
+import requests
+from flask import Flask, Response, request, stream_with_context
 
 # ---------- config ----------
 OLLAMA = os.environ.get("TARGET_OLLAMA", "http://ollama:11434")
@@ -13,7 +16,7 @@ NORMAL_MAX = int(os.environ.get("NORMAL_MAX_WORDS", "60"))
 # Reasonable defaults; caller-specified options still win
 CAP_SHORT  = json.loads(os.environ.get(
     "CAP_SHORT",
-    '{"num_predict":160,"num_ctx":1024,"temperature":0.6,"repeat_penalty":1.2", "stop": ["<|im_end|>"]}'
+    '{"num_predict":160,"num_ctx":1024,"temperature":0.6,"repeat_penalty":1.2,"stop":["<|im_end|>"]}'
 ))
 CAP_NORMAL = json.loads(os.environ.get(
     "CAP_NORMAL",
@@ -25,7 +28,10 @@ CAP_DEEP   = json.loads(os.environ.get(
 ))
 
 app = Flask(__name__)
-_SENT_SPLIT = re.compile(r'(?<=[\.!\?。！？])\s+')
+_SENT_SPLIT = re.compile(r'(?<=[\.\!\?。！？])\s+')
+TAIL_TOKENS = int(os.environ.get("TAIL_TOKENS", "0"))
+CHARS_PER_TOKEN = float(os.environ.get("CHARS_PER_TOKEN", "4.0"))
+SHORT_SENTENCES = int(os.environ.get("SHORT_SENTENCES", "2"))
 INF = 10**9
 
 # ---------- helpers ----------
@@ -36,21 +42,34 @@ def keep_first_sentences(text: str, n: int = 2) -> str:
     return " ".join(parts[:n])
 
 
-def choose_caps(body: dict):
+def has_rag(body: Dict[str, Any]) -> bool:
+    return bool(body.get("files") or body.get("collection") or body.get("collections"))
+
+
+def _caps_with_mode(template: Dict[str, Any], mode: str) -> Dict[str, Any]:
+    data = dict(template)
+    data["_mode"] = mode
+    return data
+
+
+def choose_caps(body: Dict[str, Any]) -> Dict[str, Any]:
     """Pick caps based on prompt length or RAG signals."""
     prompt = (body.get("prompt") or "").strip()
     if not prompt and isinstance(body.get("messages"), list):
         # crude collapse of user messages for chat payloads
-        prompt = " ".join(m.get("content", "") for m in body["messages"] if m.get("role") == "user")
+        prompt = " ".join(
+            m.get("content", "") for m in body["messages"] if m.get("role") == "user"
+        )
 
-    # If caller attached collections/files, assume deeper answer
-    if body.get("files") or body.get("collection") or body.get("collections"):
-        return CAP_DEEP
+    if has_rag(body):
+        return _caps_with_mode(CAP_DEEP, "deep")
 
     n = len(prompt.split())
-    if n <= SHORT_MAX:   return CAP_SHORT
-    if n <= NORMAL_MAX:  return CAP_NORMAL
-    return CAP_DEEP
+    if n <= SHORT_MAX:
+        return _caps_with_mode(CAP_SHORT, "short")
+    if n <= NORMAL_MAX:
+        return _caps_with_mode(CAP_NORMAL, "normal")
+    return _caps_with_mode(CAP_DEEP, "deep")
 
 
 def _as_int(val, default):
@@ -111,9 +130,6 @@ def clamp_options(chosen: dict, client: dict) -> dict:
     if "stop" in chosen and "stop" not in out:
         out["stop"] = chosen["stop"]
     return out
-
-
-# at top of app.py (keep your existing imports)
 DEFAULT_SYSTEM_SHORT = os.getenv(
     "DEFAULT_SYSTEM_SHORT",
     "Be brief. Answer in 1–3 sentences unless asked for more."
@@ -121,11 +137,9 @@ DEFAULT_SYSTEM_SHORT = os.getenv(
 
 def inject_concise_system(body: dict, chosen: dict) -> dict:
     """Prepend a concise system message for short, non-RAG prompts if none exists."""
-    # short cap?
-    if int(chosen.get("num_predict", 0)) > 200:
+    if chosen.get("_mode") != "short":
         return body
-    # RAG on? (collections/files attached) → do not constrain
-    if body.get("files") or body.get("collection") or body.get("collections"):
+    if has_rag(body):
         return body
 
     # Chat payload (messages) vs prompt payload
@@ -174,27 +188,215 @@ def stream_upstream(method: str, path: str, *, json_body=None, data=None, header
         mimetype=r.headers.get("Content-Type", "application/json")
     )
 
-def nonstream_upstream(method: str, path: str, *, json_body=None, headers=None, params=None):
+def nonstream_upstream(
+    method: str,
+    path: str,
+    *,
+    json_body=None,
+    headers=None,
+    params=None,
+    trim_config: Optional[Dict[str, Any]] = None,
+):
     url = f"{OLLAMA}{path}"
     r = requests.request(method, url,
                          json=json_body, headers=headers, params=params,
                          stream=False, timeout=(10, READ_TIMEOUT))
     # Pass through content-type, drop content-length if desired
     resp_headers = [(k, v) for k, v in r.headers.items()]
-    return Response(r.content, status=r.status_code, headers=resp_headers,
-                    mimetype=r.headers.get("Content-Type", "application/json"))
+    mimetype = r.headers.get("Content-Type", "application/json")
+    payload_bytes = r.content
+
+    if trim_config and "application/json" in (mimetype or "").lower():
+        try:
+            payload = r.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict) and apply_short_response_finisher(payload, trim_config):
+            payload_bytes = json.dumps(payload).encode("utf-8")
+            resp_headers = [(k, v) for k, v in resp_headers if k.lower() != "content-length"]
+
+    return Response(payload_bytes, status=r.status_code, headers=resp_headers,
+                    mimetype=mimetype)
 
 MODEL_DOWNGRADE = os.getenv("MODEL_DOWNGRADE", "1") == "1"  # toggle via env
 SEVEN_B = os.getenv("FALLBACK_7B", "qwen2.5-7b-instruct-q5_K_M")
 
 def maybe_downgrade_model(body, chosen):
     is_short = _as_int(chosen.get("num_predict"), INF) <= 200
-    has_rag  = bool(body.get("files") or body.get("collection") or body.get("collections"))
+    rag = has_rag(body)
     m = (body.get("model") or "")
-    if MODEL_DOWNGRADE and is_short and not has_rag and "14b" in m.lower():
+    if MODEL_DOWNGRADE and is_short and not rag and "14b" in m.lower():
         body["model"] = SEVEN_B
         app.logger.info("DOWNGRADE model 14B -> %s for short prompt", SEVEN_B)
     return body
+
+
+def should_trim_short(body: Dict[str, Any], chosen: Dict[str, Any], want_stream: bool) -> bool:
+    if want_stream:
+        return False
+    if SHORT_SENTENCES <= 0:
+        return False
+    if chosen.get("_mode") != "short":
+        return False
+    if has_rag(body):
+        return False
+    return True
+
+
+def compute_trim_config(
+    body: Dict[str, Any],
+    chosen: Dict[str, Any],
+    want_stream: bool,
+    client_opts: Dict[str, Any],
+    base_predict: int,
+) -> Optional[Dict[str, Any]]:
+    if not should_trim_short(body, chosen, want_stream):
+        return None
+
+    client_limit = _as_int(client_opts.get("num_predict"), INF)
+    tail_add = 0
+    if TAIL_TOKENS > 0 and base_predict < INF:
+        if client_limit == INF:
+            tail_add = TAIL_TOKENS
+        elif client_limit > base_predict:
+            tail_add = min(TAIL_TOKENS, client_limit - base_predict)
+
+    return {
+        "sentences": max(1, SHORT_SENTENCES),
+        "base_tokens": None if base_predict >= INF else base_predict,
+        "tail_tokens": tail_add,
+        "chars_per_token": max(0.1, CHARS_PER_TOKEN),
+    }
+
+
+_BOUNDARY_PUNCT = re.compile(r"([\.\!\?。！？]+[\)\]\'\"]?)\s*$")
+
+
+def trim_to_boundary(text: str) -> str:
+    text = (text or "").rstrip()
+    if not text:
+        return text
+
+    for marker in ("```", "\n\n"):
+        idx = text.find(marker)
+        if idx != -1:
+            return text[:idx].rstrip() or text
+
+    match = _BOUNDARY_PUNCT.search(text)
+    if match:
+        return text[: match.end(1)].rstrip()
+
+    for punct in ".?!。！？":
+        idx = text.rfind(punct)
+        if idx != -1:
+            return text[: idx + 1].rstrip()
+
+    return text
+
+
+def finish_short_text(text: str, config: Dict[str, Any]) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return text
+
+    base_tokens = config.get("base_tokens") or 0
+    tail_tokens = config.get("tail_tokens") or 0
+    chars_per_token = config.get("chars_per_token") or CHARS_PER_TOKEN
+    sentences = config.get("sentences") or SHORT_SENTENCES
+
+    if base_tokens > 0 and chars_per_token > 0:
+        window_tokens = base_tokens + max(0, tail_tokens)
+        max_chars = int(window_tokens * chars_per_token)
+        if max_chars > 0 and len(raw) > max_chars:
+            raw = raw[:max_chars].rstrip()
+
+    trimmed = keep_first_sentences(raw, max(1, sentences)).strip()
+
+    if tail_tokens > 0:
+        bounded = trim_to_boundary(trimmed)
+        if bounded:
+            trimmed = bounded
+
+    return trimmed or text
+
+
+def apply_short_response_finisher(payload: Dict[str, Any], config: Dict[str, Any]) -> bool:
+    changed = False
+
+    if "response" in payload and isinstance(payload["response"], str):
+        finished = finish_short_text(payload["response"], config)
+        if finished != payload["response"]:
+            payload["response"] = finished
+            changed = True
+
+    message = payload.get("message")
+    if isinstance(message, dict) and isinstance(message.get("content"), str):
+        finished = finish_short_text(message["content"], config)
+        if finished != message["content"]:
+            message["content"] = finished
+            changed = True
+
+    if changed:
+        app.logger.info(
+            "FINISH short reply sentences=%s tail=%s",
+            config.get("sentences"),
+            config.get("tail_tokens"),
+        )
+    return changed
+
+
+def handle_model_request(target_path: str) -> Response:
+    body = request.get_json(force=True, silent=True) or {}
+    chosen = choose_caps(body)
+    body = maybe_downgrade_model(body, chosen)
+
+    client_opts = extract_client_options(body)
+    final_opts = clamp_options(chosen, client_opts)
+
+    base_predict = _as_int(final_opts.get("num_predict"), INF)
+    want_stream = bool(final_opts.get("stream", True))
+    trim_config = compute_trim_config(body, chosen, want_stream, client_opts, base_predict)
+
+    # scrub OpenAI top-level knobs so upstream only sees Ollama options
+    for k in ("max_tokens", "temperature", "stop", "stream"):
+        body.pop(k, None)
+
+    if trim_config:
+        tail_tokens = trim_config.get("tail_tokens") or 0
+        base_tokens = trim_config.get("base_tokens")
+        if tail_tokens and base_tokens and base_tokens < INF:
+            final_opts = dict(final_opts)
+            final_opts["num_predict"] = base_tokens + tail_tokens
+    body["options"] = final_opts
+
+    want_stream = bool(final_opts.get("stream", True))
+    body["stream"] = want_stream
+
+    # ✅ inject concise bias for short, non-RAG prompts
+    body = inject_concise_system(body, chosen)
+
+    # DEBUG: log what we will actually send upstream
+    final_log = {k: final_opts.get(k) for k in ("num_predict", "num_ctx", "temperature", "repeat_penalty")}
+    app.logger.info(
+        "APPLY model=%s stream=%s chosen=%s final=%s",
+        body.get("model"),
+        want_stream,
+        {k: chosen.get(k) for k in ("_mode", "num_predict", "num_ctx") if k in chosen},
+        final_log,
+    )
+
+    headers = {"Accept": "application/json"}
+
+    if want_stream:
+        return stream_upstream("POST", target_path, json_body=body, headers=headers)
+
+    return nonstream_upstream(
+        "POST",
+        target_path,
+        json_body=body,
+        headers=headers,
+        trim_config=trim_config,
+    )
 
 
 
@@ -205,72 +407,12 @@ def health():
 
 @app.route("/api/generate", methods=["POST"])
 def api_generate():
-    body   = request.get_json(force=True, silent=True) or {}
-    chosen = choose_caps(body)
-    body = maybe_downgrade_model(body, chosen)
-
-    client_opts = extract_client_options(body)
-    final_opts  = clamp_options(chosen, client_opts)
-
-    # scrub OpenAI top-level knobs so upstream only sees Ollama options
-    for k in ("max_tokens", "temperature", "stop", "stream"):
-        body.pop(k, None)
-
-    body["options"] = final_opts
-    want_stream = bool(final_opts.get("stream", True))
-    body["stream"] = want_stream
-
-    # ✅ inject concise bias for short, non-RAG prompts
-    body = inject_concise_system(body, chosen)
-
-    # DEBUG: log what we will actually send upstream
-    app.logger.info("APPLY model=%s stream=%s chosen=%s final=%s",
-        body.get("model"), want_stream, chosen,
-        {k: final_opts.get(k) for k in ("num_predict","num_ctx","temperature","repeat_penalty")})
-
-
-    if want_stream:
-        # stream pass-through
-        return stream_upstream("POST", "/api/generate",
-            json_body=body, headers={"Accept":"application/json"})
-    else:
-        # single JSON object (no streaming)
-        return nonstream_upstream("POST", "/api/generate",
-            json_body=body, headers={"Accept":"application/json"})
+    return handle_model_request("/api/generate")
 
 
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
-    body   = request.get_json(force=True, silent=True) or {}
-    chosen = choose_caps(body)
-    body = maybe_downgrade_model(body, chosen)
-
-    client_opts = extract_client_options(body)
-    final_opts  = clamp_options(chosen, client_opts)
-
-    # scrub OpenAI top-level knobs so upstream only sees Ollama options
-    for k in ("max_tokens", "temperature", "stop", "stream"):
-        body.pop(k, None)
-
-    body["options"] = final_opts
-    want_stream = bool(final_opts.get("stream", True))
-    body["stream"] = want_stream
-
-    # ✅ inject concise bias for short, non-RAG prompts
-    body = inject_concise_system(body, chosen)
-
-    # DEBUG: log what we will actually send upstream
-    app.logger.info("APPLY model=%s stream=%s chosen=%s final=%s",
-        body.get("model"), want_stream, chosen,
-        {k: final_opts.get(k) for k in ("num_predict","num_ctx","temperature","repeat_penalty")})
-
-
-    if want_stream:
-        return stream_upstream("POST", "/api/chat",
-            json_body=body, headers={"Accept":"application/json"})
-    else:
-        return nonstream_upstream("POST", "/api/chat",
-            json_body=body, headers={"Accept":"application/json"})
+    return handle_model_request("/api/chat")
 
 
 
