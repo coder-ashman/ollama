@@ -3,3 +3,7 @@ __pycache__/
 *.pyo
 *.pyd
 *.pyc.*
+autosizer/__pycache__/
+macos_actions/.venv/
+*.lock
+*.log

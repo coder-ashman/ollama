@@ -1,0 +1,22 @@
+# Copy this file to ~/Library/Application Support/macos-actions/actions.yml
+# and update the script paths to match your environment.
+
+scripts:
+  unread_email_yesterday:
+    type: applescript
+    path: "~/Library/Scripts/LLM/unread_email_yesterday.scpt"
+    timeout: 120
+  meetings_today:
+    type: applescript
+    path: "~/Library/Scripts/LLM/meetings_today.scpt"
+    timeout: 60
+  new_mail_recent:
+    type: applescript
+    path: "~/Library/Scripts/LLM/new_mail_since_hour.scpt"
+    timeout: 45
+
+reports:
+  email_digest:
+    unread_key: unread_email_yesterday
+    meetings_key: meetings_today
+    new_mail_key: new_mail_recent
