@@ -2,4 +2,4 @@ fastapi==0.110.0
 uvicorn[standard]==0.29.0
 pydantic==1.10.14
 PyYAML==6.0.1
-pyobjc==10.2
+pyobjc==12.0
