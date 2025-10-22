@@ -356,7 +356,7 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
     generated_date = _format_date(generated)
 
     rows: List[str] = []
-    divider_row = "| --- | --- | --- | --- | --- | --- | --- |"
+    divider_row = "| --- | --- | --- | --- | --- | --- |"
 
     for idx, event in enumerate(filtered_events, start=1):
         if rows:
@@ -365,6 +365,11 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
         ordinal = int(event.get("ordinal") or idx)
         start_dt = _parse_iso(event.get("start"))
         end_dt = _parse_iso(event.get("end"))
+
+        if start_dt:
+            date_value = start_dt.strftime("%a, %b %d").replace(" 0", " ")
+        else:
+            date_value = "—"
 
         if start_dt and end_dt:
             if start_dt.date() == end_dt.date():
@@ -379,6 +384,7 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
             time_span = "—"
 
         date_value = start_dt.strftime("%a, %b %d").replace(" 0", " ") if start_dt else "—"
+        schedule_cell = f"**{_escape_md(date_value)}** — **{_escape_md(time_span)}**"
 
         title = _escape_md(_strip_html(event.get("title") or "Untitled Meeting"))
         raw_summary = _strip_html(event.get("summary") or "")
@@ -389,24 +395,23 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
         optional_fragment = f" _(optional attendees: {optional_count})_" if optional_count else ""
         command_hint = f"`meetings_today_detail({ordinal})`"
 
-        session_cell = f"🟦 **{title}**{summary_block}{optional_fragment}"
-        me_required = "✅" if _is_me_required(event) else ""
+        session_cell = f"🔹 **{title}**{summary_block}{optional_fragment}"
+        required_cell = "✅" if _is_me_required(event) else ""
 
         rows.append(
-            "| {row} | {date} | {time} | {session} | {organizer} | {me} | {detail} |".format(
-                row=f"🟦 **{ordinal:02d}**",
-                date=f"🟦 **{_escape_md(date_value)}**",
-                time=f"🟦 **{_escape_md(time_span)}**",
+            "| {row} | {schedule} | {session} | {organizer} | {required} | {detail} |".format(
+                row=f"**{ordinal:02d}**",
+                schedule=schedule_cell,
                 session=session_cell,
                 organizer=organizer,
-                me=me_required,
+                required=required_cell,
                 detail=command_hint,
             )
         )
 
     table_header = (
-        "| Row | Date | Time | Session | Organizer | Me? | Detail |\n"
-        "|---|---|---|---|---|---|---|\n"
+        "| Row | Schedule | Session | Organizer | Required | Detail |\n"
+        "|:--|:------------------|:----------------|:-----------|:---------:|:-------|\n"
     )
     table_rows = "\n".join(rows)
 
