@@ -2,7 +2,7 @@ from flask import Blueprint, Response, request
 
 from .config import OLLAMA
 from .proxy import handle_model_request, passthrough_request
-from .macos_actions import call_script
+from .macos_actions import call_script, maybe_handle_chat
 
 
 routes = Blueprint("autosizer", __name__)
@@ -20,6 +20,10 @@ def api_generate():
 
 @routes.route("/api/chat", methods=["POST"])
 def api_chat():
+    body = request.get_json(force=True, silent=True) or {}
+    handled = maybe_handle_chat(body)
+    if handled is not None:
+        return handled
     return handle_model_request("/api/chat")
 
 
