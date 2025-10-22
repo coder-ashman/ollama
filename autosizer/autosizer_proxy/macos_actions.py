@@ -570,6 +570,89 @@ def _prepare_email_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, An
     return prepared
 
 
+def _aggregate_email_threads(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    threads: List[Dict[str, Any]] = []
+    by_subject: Dict[str, Dict[str, Any]] = {}
+
+    for message in messages:
+        canonical = message.get("canonical_subject") or "(no subject)"
+        thread = by_subject.get(canonical)
+        if not thread:
+            thread = {
+                "canonical_subject": canonical,
+                "subjects": [],
+                "messages": [],
+                "senders": set(),
+                "recipients_to": set(),
+                "recipients_cc": set(),
+                "mailboxes": set(),
+                "has_unread": False,
+                "latest_message": None,
+                "latest_index": -1,
+            }
+            by_subject[canonical] = thread
+            threads.append(thread)
+
+        subject_value = message.get("subject") or ""
+        if subject_value and subject_value not in thread["subjects"]:
+            thread["subjects"].append(subject_value)
+
+        thread["senders"].add(message.get("sender") or "")
+        for recip in message.get("recipients_to") or []:
+            thread["recipients_to"].add(recip)
+        for recip in message.get("recipients_cc") or []:
+            thread["recipients_cc"].add(recip)
+        mailbox = message.get("mailbox") or ""
+        if mailbox:
+            thread["mailboxes"].add(mailbox)
+        if message.get("is_unread"):
+            thread["has_unread"] = True
+
+        summary_entry = {
+            "index": message.get("index"),
+            "sender": message.get("sender"),
+            "recipients_to": message.get("recipients_to") or [],
+            "recipients_cc": message.get("recipients_cc") or [],
+            "date_received": message.get("date_received"),
+            "body_preview": message.get("body_preview"),
+            "is_unread": message.get("is_unread"),
+            "mailbox": mailbox,
+        }
+        thread["messages"].append(summary_entry)
+
+        index_value = message.get("index") or 0
+        try:
+            idx_numeric = int(index_value)
+        except (ValueError, TypeError):
+            idx_numeric = len(thread["messages"])
+        if idx_numeric >= thread["latest_index"]:
+            thread["latest_index"] = idx_numeric
+            thread["latest_message"] = summary_entry
+
+    for ordinal, thread in enumerate(threads, start=1):
+        thread["thread_id"] = ordinal
+        thread["messages_count"] = len(thread["messages"])
+        thread["subjects"] = sorted(set(thread["subjects"]))
+
+        to_sorted = sorted({_strip_html(val) for val in thread["recipients_to"] if _strip_html(val)}, key=str.lower)
+        cc_sorted = sorted({_strip_html(val) for val in thread["recipients_cc"] if _strip_html(val)}, key=str.lower)
+        senders_sorted = sorted({_strip_html(val) for val in thread["senders"] if _strip_html(val)}, key=str.lower)
+        mailboxes_sorted = sorted({_strip_html(val) for val in thread["mailboxes"] if _strip_html(val)}, key=str.lower)
+
+        thread["recipients_to"] = to_sorted
+        thread["recipients_cc"] = cc_sorted
+        thread["senders"] = senders_sorted
+        thread["mailboxes"] = mailboxes_sorted
+
+        participants = set()
+        participants.update(senders_sorted)
+        participants.update(to_sorted)
+        participants.update(cc_sorted)
+        thread["participants"] = sorted(participants, key=str.lower)
+
+    return threads
+
+
 def _email_window_label(script: str, window_info: Optional[Dict[str, Any]] = None) -> str:
     labels = {
         "fetch_yesterday_emails": "Yesterday's Unread Emails",
@@ -604,6 +687,7 @@ def _email_system_prompt() -> str:
 
 def _email_user_prompt(
     prepared: List[Dict[str, Any]],
+    threads: List[Dict[str, Any]],
     script: str,
     window_info: Optional[Dict[str, Any]],
 ) -> str:
@@ -629,15 +713,18 @@ def _email_user_prompt(
         window_details = ["start: midnight today (local)", "end: now (local)"]
 
     window_details_block = "\n".join(f"- {detail}" for detail in window_details)
-    dataset = json.dumps(prepared, indent=2, ensure_ascii=False)
+    dataset_payload = {
+        "threads": threads,
+        "messages_total": len(prepared),
+    }
+    dataset = json.dumps(dataset_payload, indent=2, ensure_ascii=False)
     instructions = (
         f"Window: {window_label}\n"
         f"{window_details_block}\n"
         f"My identifiers: {me_label}\n\n"
         "Instructions:\n"
-        "- Group messages into threads representing the same conversation. Use canonical_subject as a hint;\n"
-        "  merge messages that clearly belong together, even if the subject varies slightly (e.g., RE/FW prefixes).\n"
-        "- For each thread produce Markdown exactly in this structure:\n"
+        "- Threads are already deduplicated. Iterate through the `threads` array in ascending `thread_id` order.\n"
+        "- Produce exactly one Markdown section per thread using this structure:\n"
         "#### Thread {n}: {thread title}\n"
         "- Sender: person who authored the latest email directed at me.\n"
         "- Recipients: unique To + Cc recipients (comma separated).\n"
@@ -645,7 +732,11 @@ def _email_user_prompt(
         "- Summary: 1-3 sentences capturing the current state or decisions in the thread. Mention if any message preview lacks detail (say 'Summary: Not enough info').\n"
         "- My Actions: concrete follow-ups expected of me. If none, respond with 'None'.\n"
         "- Note if the latest message in the thread is unread.\n\n"
-        "End the report with a short '**Quick glance:**' bullet list highlighting any threads with pending actions for me.\n\n"
+        "After listing all threads, include two final sections:\n"
+        "### Key Actions Needed\n"
+        "- 1-3 bullet points consolidating the most important follow-ups. If none, write '- None.'\n"
+        "### Recommendations\n"
+        "- 1-3 bullet points with suggestions or reminders. If none, write '- None.'\n\n"
         "Important formatting rules:\n"
         "- Respond only with the Markdown described above.\n"
         "- Do not include explanations, instructions, JSON, or code snippets.\n"
@@ -703,16 +794,11 @@ def _invoke_email_summary_llm(system_prompt: str, user_prompt: str, model: Optio
 
 
 def _fallback_email_summary(
-    prepared: List[Dict[str, Any]],
+    threads: List[Dict[str, Any]],
     script: str,
     window_info: Optional[Dict[str, Any]],
 ) -> str:
     window = _email_window_label(script, window_info)
-    grouped: Dict[str, List[Dict[str, Any]]] = {}
-    for item in prepared:
-        key = item.get("canonical_subject") or "(no subject)"
-        grouped.setdefault(key, []).append(item)
-
     lines = [f"### 📬 {_escape_md(window)}", ""]
 
     info = window_info or {}
@@ -735,23 +821,33 @@ def _fallback_email_summary(
     lines.append("_LLM summary unavailable; raw highlights below._")
     lines.append("")
 
-    for idx, (_key, items) in enumerate(grouped.items(), start=1):
-        items_sorted = sorted(items, key=lambda entry: entry.get("index", 0))
-        latest = items_sorted[-1]
-        subject = latest.get("subject") or "(No Subject)"
+    for thread in threads:
+        latest = thread.get("latest_message") or {}
+        subject = thread.get("subjects") or []
+        subject_label = subject[0] if subject else "(No Subject)"
         sender = latest.get("sender") or "Unknown sender"
-        recipients = latest.get("recipients_to", []) + latest.get("recipients_cc", [])
+        recipients = thread.get("recipients_to", []) + thread.get("recipients_cc", [])
         unread_flag = " (unread)" if latest.get("is_unread") else ""
-        lines.append(f"#### Thread {idx}: {subject}{unread_flag}")
+        lines.append(f"#### Thread {thread.get('thread_id', '?')}: {subject_label}{unread_flag}")
         lines.append(f"- Sender: {sender}")
         lines.append(f"- Recipients: {', '.join(recipients) if recipients else 'None listed'}")
-        replies = {entry.get("sender") for entry in items_sorted[1:]} - {sender}
+        replies = {
+            entry.get("sender")
+            for entry in thread.get("messages", [])[1:]
+            if entry.get("sender")
+        } - {sender}
         reply_label = ", ".join(sorted(filter(None, replies))) if replies else "None noted"
         lines.append(f"- Replies: {reply_label}")
         preview = latest.get("body_preview") or "No preview available."
         lines.append(f"- Summary: {preview}")
         lines.append("- My Actions: Unknown")
         lines.append("")
+
+    lines.append("### Key Actions Needed")
+    lines.append("- None.")
+    lines.append("")
+    lines.append("### Recommendations")
+    lines.append("- None.")
 
     return "\n".join(lines).strip()
 
@@ -763,17 +859,18 @@ def _render_email_summary(
     payload_dict: Optional[Dict[str, Any]],
 ) -> Optional[str]:
     prepared = _prepare_email_messages(messages)
+    threads = _aggregate_email_threads(prepared)
     window_info = _extract_email_window(payload_dict)
-    if not prepared:
+    if not threads:
         window = _email_window_label(script, window_info)
         return f"### 📬 {window}\n\n> No emails were found in this window."
 
     system_prompt = _email_system_prompt()
-    user_prompt = _email_user_prompt(prepared, script, window_info)
+    user_prompt = _email_user_prompt(prepared, threads, script, window_info)
     summary = _invoke_email_summary_llm(system_prompt, user_prompt, model)
     if summary:
         return summary
-    return _fallback_email_summary(prepared, script, window_info)
+    return _fallback_email_summary(threads, script, window_info)
 
 
 _SELF_IDENTIFIERS: List[str] = []
