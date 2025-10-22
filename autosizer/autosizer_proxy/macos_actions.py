@@ -247,6 +247,20 @@ def _strip_html(value: Any) -> str:
     return text.strip()
 
 
+def _normalize_name(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def _extract_event(payload: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(payload, dict):
+        event = payload.get("event")
+        if isinstance(event, dict):
+            return event
+        if all(key in payload for key in ("title", "start", "end")):
+            return payload
+    return None
+
+
 def _escape_md(value: Any) -> str:
     text = str(value or "")
     for needle, repl in (
@@ -301,9 +315,9 @@ for chunk in (
     if not chunk:
         continue
     for token in re.split(r"[,\n;]+", chunk):
-        cleaned = token.strip().lower()
-        if cleaned:
-            _SELF_IDENTIFIERS.append(cleaned)
+        norm = _normalize_name(token)
+        if norm:
+            _SELF_IDENTIFIERS.append(norm)
 
 
 def _event_should_skip(event: Dict[str, Any]) -> bool:
@@ -322,12 +336,22 @@ def _is_me_required(event: Dict[str, Any]) -> bool:
     if not _SELF_IDENTIFIERS:
         return False
     attendees = event.get("required_attendees_full") or event.get("required_attendees") or []
-    normalized = [_strip_html(attendee).lower() for attendee in attendees if attendee]
+    normalized: List[str] = []
+    for attendee in attendees:
+        stripped = _strip_html(attendee)
+        if not stripped:
+            continue
+        normalized.append(_normalize_name(stripped))
+        if "@" in stripped:
+            local = stripped.split("@", 1)[0]
+            normalized.append(_normalize_name(local))
+
+    normalized = [value for value in normalized if value]
     for ident in _SELF_IDENTIFIERS:
+        if not ident:
+            continue
         for attendee in normalized:
-            if not attendee:
-                continue
-            if ident == attendee or ident in attendee or attendee in ident:
+            if attendee == ident:
                 return True
     return False
 
@@ -366,11 +390,6 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
         start_dt = _parse_iso(event.get("start"))
         end_dt = _parse_iso(event.get("end"))
 
-        if start_dt:
-            date_value = start_dt.strftime("%a, %b %d").replace(" 0", " ")
-        else:
-            date_value = "—"
-
         if start_dt and end_dt:
             if start_dt.date() == end_dt.date():
                 time_span = f"{_format_clock(start_dt)} – {_format_clock(end_dt)}"
@@ -400,7 +419,7 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
 
         rows.append(
             "| {row} | {schedule} | {session} | {organizer} | {required} | {detail} |".format(
-                row=f"**{ordinal:02d}**",
+                row=f"{ordinal:02d}",
                 schedule=schedule_cell,
                 session=session_cell,
                 organizer=organizer,
@@ -504,21 +523,24 @@ def _format_script_message(script: str, status: int, mimetype: str, payload_byte
                     events = parsed.get("events") or []
                     return f"{heading}\n\n{_render_meetings_summary(events)}"
 
-                event_detail = parsed.get("event")
+                event_detail = _extract_event(parsed)
                 if not isinstance(event_detail, dict):
-                    if isinstance(parsed, dict) and all(key in parsed for key in ("title", "start", "end")):
-                        event_detail = parsed
-                    else:
-                        raw_stdout = data.get("stdout")
-                        if isinstance(raw_stdout, str):
-                            try:
-                                stdout_payload = json.loads(raw_stdout)
-                            except json.JSONDecodeError:
-                                stdout_payload = None
-                            if isinstance(stdout_payload, dict):
-                                maybe_event = stdout_payload.get("event")
-                                if isinstance(maybe_event, dict):
-                                    event_detail = maybe_event
+                    raw_stdout = data.get("stdout")
+                    if isinstance(raw_stdout, str):
+                        candidate = raw_stdout.strip()
+                        stdout_payload = None
+                        try:
+                            stdout_payload = json.loads(candidate)
+                        except json.JSONDecodeError:
+                            first_brace = candidate.find("{")
+                            last_brace = candidate.rfind("}")
+                            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                                snippet = candidate[first_brace : last_brace + 1]
+                                try:
+                                    stdout_payload = json.loads(snippet)
+                                except json.JSONDecodeError:
+                                    stdout_payload = None
+                        event_detail = _extract_event(stdout_payload)
 
                 if isinstance(event_detail, dict):
                     return f"{heading}\n\n{_render_meeting_detail(event_detail)}"
