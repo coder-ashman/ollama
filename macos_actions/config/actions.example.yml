@@ -2,21 +2,25 @@
 # and update the script paths to match your environment.
 
 scripts:
-  unread_email_yesterday:
+  fetch_email_yesterday:
     type: applescript
-    path: "~/Library/Scripts/LLM/unread_email_yesterday.scpt"
+    path: "~/ollama/macos_actions/scripts/Fetch_Yesterday_Emails.applescript"
     timeout: 120
+  fetch_weekend_emails:
+    type: applescript
+    path: "~/ollama/macos_actions/scripts/Fetch_Weekend_Emails.applescript"
+    timeout: 120
+  unread_last_hour:
+    type: applescript
+    path: "~/ollama/macos_actions/scripts/Fetch_LastHour_Unread.applescript"
+    timeout: 60
   meetings_today:
     type: shell
     path: "~/ollama/macos_actions/scripts/today_events.py"
     timeout: 90
-  new_mail_recent:
-    type: applescript
-    path: "~/Library/Scripts/LLM/new_mail_since_hour.scpt"
-    timeout: 45
 
 reports:
   email_digest:
-    unread_key: unread_email_yesterday
+    unread_key: fetch_email_yesterday
     meetings_key: meetings_today
-    new_mail_key: new_mail_recent
+    new_mail_key: unread_last_hour
