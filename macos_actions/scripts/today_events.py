@@ -75,12 +75,14 @@ def event_record(event):
 
     notes = event.notes() or ""
 
+    max_required = 5
+
     return {
         "title": event.title() or "",
         "start": start_iso,
         "end": end_iso,
         "organizer": organiser,
-        "required_attendees": required,
+        "required_attendees": required[:max_required],
         "optional_attendees": optional,
         "summary": notes[:160],
     }
