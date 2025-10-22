@@ -335,15 +335,14 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
         session_cell = f"**{title}**{summary_block}{optional_fragment}"
 
         rows.append(
-            f"| {ordinal:02d} | {time_range} | {session_cell} | {organizer} | {required_text} | {command_hint} |"
+            f"| 🔹 **{ordinal:02d}** | **{time_range}** | 🔷 {session_cell} | {organizer} | {required_text} | {command_hint} |"
         )
 
     table_header = (
         "| # | Time | Session | Organizer | Required | Detail |\n"
         "|---|------|---------|-----------|----------|--------|\n"
     )
-    separator = "\n|---|------|---------|-----------|----------|--------|\n"
-    table_rows = separator.join(rows)
+    table_rows = "\n".join(rows)
 
     intro = (
         f"### 📅 {heading}\n"
