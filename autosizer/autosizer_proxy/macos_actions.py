@@ -295,8 +295,8 @@ def _format_blockquote(text: str) -> str:
 
 _SELF_IDENTIFIERS: List[str] = []
 for chunk in (
-    globals().get("OSX_ACTIONS_SELF", "") or "",
-    globals().get("OSX_ACTIONS_SELF_ALIASES", "") or "",
+    globals().get("OSX_ACTIONS_SELF", ""),
+    globals().get("OSX_ACTIONS_SELF_ALIASES", ""),
 ):
     if not chunk:
         continue
@@ -356,7 +356,7 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
     generated_date = _format_date(generated)
 
     rows: List[str] = []
-    divider_row = "| --- | --- | --- | --- | --- | --- |"
+    divider_row = "| -- | -- | -- | -- | -- | -- |"
 
     for idx, event in enumerate(filtered_events, start=1):
         if rows:
@@ -396,7 +396,7 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
         command_hint = f"`meetings_today_detail({ordinal})`"
 
         session_cell = f"🔹 **{title}**{summary_block}{optional_fragment}"
-        required_cell = "✅" if _is_me_required(event) else ""
+        required_cell = "Y" if _is_me_required(event) else ""
 
         rows.append(
             "| {row} | {schedule} | {session} | {organizer} | {required} | {detail} |".format(
@@ -506,7 +506,7 @@ def _format_script_message(script: str, status: int, mimetype: str, payload_byte
 
                 event_detail = parsed.get("event")
                 if not isinstance(event_detail, dict):
-                    if isinstance(parsed, dict) and {"title", "start"}.issubset(parsed.keys()):
+                    if isinstance(parsed, dict) and all(key in parsed for key in ("title", "start", "end")):
                         event_detail = parsed
                     else:
                         raw_stdout = data.get("stdout")
