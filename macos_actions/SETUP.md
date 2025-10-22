@@ -295,8 +295,8 @@ Mail/Calendar. Approve these prompts.
 2. Rebuild/restart autosizer so the environment variables are visible.
 
 3. Invoke the new endpoints from Open WebUI / MCP by calling
-   `POST http://autosizer:8089/tool/osx/run` (if you added the relay) or by
-   making direct HTTP requests in a tool call.
+   `POST http://autosizer:8089/tool/osx/run` with a JSON body such as
+   `{"script":"fetch_yesterday_emails"}` (add a `payload` object if the script expects parameters). You can also hit the Gateway directly if you do not need the relay.
 
 ---
 

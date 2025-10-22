@@ -8,6 +8,9 @@ def _load_cap(env_var: str, default_json: str) -> dict:
 
 OLLAMA = os.environ.get("TARGET_OLLAMA", "http://ollama:11434")
 READ_TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "300"))  # seconds
+OSX_ACTIONS_BASE = os.environ.get("OSX_ACTIONS_BASE", "").rstrip("/")
+OSX_ACTIONS_KEY = os.environ.get("OSX_ACTIONS_KEY", "")
+OSX_ACTIONS_TIMEOUT = float(os.environ.get("OSX_ACTIONS_TIMEOUT", "30"))
 
 SHORT_MAX = int(os.environ.get("SHORT_MAX_WORDS", "12"))
 NORMAL_MAX = int(os.environ.get("NORMAL_MAX_WORDS", "60"))
@@ -42,6 +45,9 @@ INF = 10 ** 9
 __all__ = [
     "OLLAMA",
     "READ_TIMEOUT",
+    "OSX_ACTIONS_BASE",
+    "OSX_ACTIONS_KEY",
+    "OSX_ACTIONS_TIMEOUT",
     "SHORT_MAX",
     "NORMAL_MAX",
     "CAP_SHORT",
