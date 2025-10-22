@@ -1,7 +1,9 @@
 # macOS Actions Gateway
 
 This package hosts a small FastAPI service that runs directly on macOS to expose
-approved AppleScript, JXA, or Shortcuts automations over HTTP. It is designed to
+approved host automations over HTTP. Most actions remain AppleScript/Shortcuts,
+but the calendar workflow now uses a Python + EventKit helper so recurring
+meetings resolve to the correct “today” occurrence. The gateway is designed to
 work alongside the autosizer proxy so your local LLM can request high-trust
 host actions (mail digests, calendar summaries, etc.) without leaking sensitive
 context to the public internet.
@@ -11,9 +13,12 @@ context to the public internet.
 - `service/`: FastAPI app and helpers for loading configuration, enforcing API
   keys, and executing whitelisted scripts.
 - `config/actions.example.yml`: sample configuration mapping friendly script
-  names to the AppleScripts you already maintain.
+  names to the AppleScripts you already maintain, plus the EventKit-powered
+  `meetings_today` Python helper.
+- `scripts/today_events.py`: EventKit bridge that emits today’s calendar
+  occurrences as JSON (recurring events included).
 - `requirements.txt`: pinned dependency list for the dedicated virtualenv on
-  your corporate Mac.
+  your corporate Mac (now includes `pyobjc`).
 - `SETUP.md`: exhaustive, step-by-step instructions for installing and running
   the gateway on macOS (virtualenv, LaunchAgent, permissions, etc.).
 

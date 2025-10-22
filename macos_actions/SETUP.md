@@ -1,38 +1,27 @@
 # macOS Actions Gateway – Setup Guide
 
 Use this checklist to deploy the automation gateway on your corporate Mac. The
-steps assume you already have AppleScripts that extract unread email and
-calendar data.
+mail automations continue to rely on AppleScript, while the calendar workflow
+now uses a Python + EventKit helper (`scripts/today_events.py`) so recurring
+meetings produce the correct “today” occurrence times.
 
 ---
 
 ## 1. Prerequisites
 
-1. **macOS account:** you must be logged into the account that will run the
-   automations (no admin/root required).
+1. **macOS account:** use the user account that will run the automations (admin
+   not required).
 2. **Python 3.11+** installed via Xcode Command Line Tools or your corporate
    package manager (`python3 --version`).
-3. **AppleScripts ready:** ensure your scripts print either JSON or clear text
-   when run via `osascript`. Example JSON payload (recommended):
-
-   ```applescript
-   -- unread_email_yesterday.scpt
-   set emailItems to {¬
-     {|thread_id|:"abc", subject:"Quarterly review", messages:3, summary:"Needs follow-up"},
-     {|thread_id|:"xyz", subject:"Stand-up", messages:1, summary:"FYI only"}
-   }
-   set jsonText to "{\"threads\":" & (my encodeJSON(emailItems)) & "}"
-   return jsonText
-   ```
-
-   (Adjust to match your scripts; plain text still works, but JSON unlocks
-   automatic grouping.)
-
-4. **Identify script locations** – e.g.:
+3. **AppleScripts for mail:** keep the unread/new-mail AppleScripts you already
+   use. They should return plain text or JSON when run via `osascript`.
+4. **Calendar via EventKit:** `macos_actions/scripts/today_events.py` is bundled
+   and returns today’s occurrences as JSON; no AppleScript needed for meetings.
+5. **Identify script locations** – e.g.:
 
    - `~/Library/Scripts/LLM/unread_email_yesterday.scpt`
-   - `~/Library/Scripts/LLM/meetings_today.scpt`
    - `~/Library/Scripts/LLM/new_mail_since_hour.scpt`
+   - `~/macos-actions/scripts/today_events.py` (provided)
 
 ---
 
@@ -40,7 +29,13 @@ calendar data.
 
 1. On your workstation, copy the `macos_actions/` directory from this repo to
    the target Mac. Recommended destination: `~/macos-actions`.
-2. Inside `~/macos-actions`, create the configuration folder:
+2. Ensure the EventKit helper is executable:
+
+   ```bash
+   chmod +x ~/macos-actions/scripts/today_events.py
+   ```
+
+3. Inside `~/macos-actions`, create the configuration folder:
 
    ```bash
    mkdir -p "${HOME}/Library/Application Support/macos-actions"
@@ -48,8 +43,8 @@ calendar data.
       "${HOME}/Library/Application Support/macos-actions/actions.yml"
    ```
 
-3. Edit `actions.yml` and update each script path to match your AppleScripts.
-   If you renamed keys, keep the `reports.email_digest` section in sync.
+4. Edit `actions.yml` and update each script path. For calendar meetings, keep
+   the default pointing to `scripts/today_events.py` unless you move it.
 
 ---
 
@@ -63,6 +58,9 @@ pip install --upgrade pip
 pip install -r macos_actions/requirements.txt
 ```
 
+> Installing `pyobjc` (bundled in the requirements file) downloads many wheels
+> and can take several minutes—this is normal.
+
 Freeze the versions so future installs stay consistent:
 
 ```bash
@@ -73,7 +71,29 @@ Keep the virtualenv for the LaunchAgent step.
 
 ---
 
-## 4. Secure the API key
+## 4. Authorize calendar access (EventKit)
+
+> Do these steps in **Terminal.app** (not VS Code’s integrated terminal) so the
+> macOS permission dialog appears and the decision is stored for the correct
+> binary.
+
+```bash
+source ~/macos-actions/.venv/bin/activate
+python macos_actions/scripts/today_events.py
+```
+
+- The first run pops up “python wants to access your Calendars.” Click **OK**.
+- If you previously denied access, reset the permission with
+  `tccutil reset Calendar` and run the command again.
+- Verify the script now prints JSON with today’s events. If you still see an
+  empty payload, check **System Settings → Privacy & Security → Calendars** and
+  ensure the entry for your virtualenv’s `python` binary is enabled.
+
+You can re-run the script at any time to confirm permission sticks.
+
+---
+
+## 5. Secure the API key
 
 Pick a long random string and store it in the macOS Keychain:
 
@@ -88,7 +108,7 @@ LaunchAgent environment instead. Keychain is recommended.)
 
 ---
 
-## 5. Test the service manually
+## 6. Test the service manually
 
 1. Start the API with uvicorn inside the virtualenv:
 
@@ -105,12 +125,15 @@ LaunchAgent environment instead. Keychain is recommended.)
    curl http://127.0.0.1:8765/health
    ```
 
-3. Exercise a script (replace key names if you customized them):
+3. Exercise each script (replace key names if you customized them):
 
    ```bash
    API_KEY=$(security find-generic-password -s osx_actions_key -w)
    curl -X POST http://127.0.0.1:8765/scripts/unread_email_yesterday/run \
      -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d '{}'
+
+    curl -X POST http://127.0.0.1:8765/scripts/meetings_today/run \
+      -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d '{}'
    ```
 
 4. Run the combined report:
@@ -127,7 +150,7 @@ Stop uvicorn once satisfied (Ctrl+C).
 
 ---
 
-## 6. Install the LaunchAgent
+## 7. Install the LaunchAgent
 
 1. Create a wrapper script that loads the API key from Keychain and launches
    uvicorn. Save as `~/macos-actions/bin/start-gateway.sh`:
@@ -184,7 +207,7 @@ Mail/Calendar. Approve these prompts.
 
 ---
 
-## 7. Connect autosizer (or MCP clients)
+## 8. Connect autosizer (or MCP clients)
 
 1. Inside your Rancher `docker-compose.yml`, add the gateway coordinates and API
    key to the autosizer service:
@@ -205,7 +228,7 @@ Mail/Calendar. Approve these prompts.
 
 ---
 
-## 8. Scheduling checks (optional)
+## 9. Scheduling checks (optional)
 
 To automate daily digests or hourly new-mail pings, create additional
 LaunchAgents that `curl` the `/reports/email-digest` endpoint and post the
@@ -232,7 +255,7 @@ file that the LLM ingests).
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 - **`invalid api key`** – confirm the LaunchAgent exports the same key autosizer
   uses. Re-run the Keychain command to verify.
@@ -240,8 +263,12 @@ file that the LLM ingests).
   inspect the failure. Grant Automation permissions if prompted.
 - **No JSON in `parsed`** – adjust your AppleScript to `return` a JSON string.
   Any raw text is still preserved in `stdout`.
-- **Permission prompts** – approve access for Mail/Calendar once; macOS caches
-  this for the calling binary (`osascript` and your shell script).
+- **Calendar access denied / no popup** – reset with `tccutil reset Calendar`,
+  re-run `today_events.py` from Terminal, and approve the dialog. Check
+  System Settings → Privacy & Security → Calendars to ensure the virtualenv’s
+  `python` entry is toggled on.
+- **Installation takes a long time** – `pyobjc` installs dozens of wheels; the
+  first `pip install` often takes several minutes.
 
 You now have a hardened, host-native gateway that your LLM stack can call to
 summarize unread mail, list meetings, and poll for new messages.

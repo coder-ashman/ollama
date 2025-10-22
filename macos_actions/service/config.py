@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, validator
 class ScriptConfig(BaseModel):
     """Definition of a whitelisted automation action."""
 
-    type: str = Field(..., regex=r"^(applescript|jxa|shortcut)$")
+    type: str = Field(..., regex=r"^(applescript|jxa|shortcut|shell)$")
     path: Optional[Path] = None
     name: Optional[str] = None
     timeout: int = Field(30, ge=1, le=600)

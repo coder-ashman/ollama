@@ -7,9 +7,9 @@ scripts:
     path: "~/Library/Scripts/LLM/unread_email_yesterday.scpt"
     timeout: 120
   meetings_today:
-    type: applescript
-    path: "~/Library/Scripts/LLM/meetings_today.scpt"
-    timeout: 60
+    type: shell
+    path: "~/macos-actions/scripts/today_events.py"
+    timeout: 90
   new_mail_recent:
     type: applescript
     path: "~/Library/Scripts/LLM/new_mail_since_hour.scpt"

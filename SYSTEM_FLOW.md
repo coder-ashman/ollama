@@ -12,8 +12,11 @@ you can follow from first boot through steady-state operation.
 flowchart LR
     subgraph Host macOS
         A[macOS Actions LaunchAgent<br>uvicorn FastAPI]
-        B[AppleScripts & Shortcuts]
+        B[AppleScripts / Shortcuts]
+        G[EventKit (Python)
+today_events.py]
         A -- invokes --> B
+        A -- invokes --> G
     end
 
     subgraph Rancher VM
@@ -39,7 +42,8 @@ Flask caps]
 ### Component roles
 
 - **macOS Actions Gateway** (host): executes whitelisted AppleScripts/JXA and
-  exposes `/scripts/*` and `/reports/email-digest` over HTTP (`127.0.0.1:8765`).
+  the `today_events.py` EventKit helper, exposing `/scripts/*` and
+  `/reports/email-digest` over HTTP (`127.0.0.1:8765`).
 - **autosizer proxy** (container): enforces generation caps, proxies Ollama, and
   relays tool requests to the gateway via `host.lima.internal` using `OSX_ACTIONS_*` env vars.
 - **Open WebUI / MCP client**: user interface. Prompts can call the digest
@@ -53,7 +57,7 @@ Flask caps]
 1. **Morning digest:**
    1. Open WebUI issues a tool call to autosizer (`/tool/osx/run` or direct HTTP) requesting `/reports/email-digest`.
    2. Autosizer attaches the shared API key and calls the gateway at `http://host.lima.internal:8765`.
-   3. The gateway looks up the configured scripts (`unread_email_yesterday`, `meetings_today`, `new_mail_recent`), runs each via `osascript`/Shortcuts, and parses their JSON output.
+   3. The gateway looks up the configured scripts (`unread_email_yesterday`, `meetings_today`, `new_mail_recent`). Mail scripts run via `osascript`, while `meetings_today` executes `today_events.py` (EventKit) so recurring meetings return today’s occurrence. Each result is parsed as JSON when available.
    4. Aggregated response returns to autosizer, which presents summary text or structured data to the LLM for synthesis.
 
 2. **Top-of-hour check:**
@@ -71,8 +75,11 @@ Flask caps]
 ### Phase A – Host Gateway Bring-Up
 
 1. Copy `macos_actions/` to the Mac (`~/macos-actions`).
-2. Edit `actions.yml` to point at your existing AppleScripts.
-3. Create the virtualenv, install requirements, and store the API key in Keychain (SETUP.md §3–4).
+2. Edit `actions.yml` to point at your existing AppleScripts and the bundled
+   `scripts/today_events.py`.
+3. Create the virtualenv, install requirements (including PyObjC), run
+   `python scripts/today_events.py` once to approve Calendar access, and store
+   the API key in Keychain (SETUP.md §§3–5).
 4. Manual test:
    - Start uvicorn in the terminal.
    - `curl /health`, `curl /scripts/.../run`, `curl /reports/email-digest`.

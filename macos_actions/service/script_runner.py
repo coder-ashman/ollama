@@ -46,6 +46,10 @@ def run_named_script(name: str, params: Dict[str, Any] | None = None) -> ScriptR
         input_value = params.get("input")
         if input_value:
             cmd += ["--input", str(input_value)]
+    elif config.type == "shell":
+        if not config.path:
+            raise ValueError(f"Script '{name}' is missing a path")
+        cmd = [str(config.path)] + list(_render_args(params))
     else:
         raise ValueError(f"Unsupported script type: {config.type}")
 

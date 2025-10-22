@@ -5,8 +5,9 @@ This repository now contains two coordinated components:
 - `autosizer/` – the containerised proxy that fronts Ollama for Open WebUI and
   applies dynamic generation caps, model downgrades, and short-answer finishing.
 - `macos_actions/` – a host-native FastAPI gateway that runs on macOS to expose
-  approved AppleScripts/Shortcuts so your LLM can retrieve email and calendar
-  digests without leaving the corporate network.
+  approved host automations (AppleScript for mail, EventKit/Python for
+  calendars) so your LLM can retrieve digests without leaving the corporate
+  network.
 
 ## Getting started
 
@@ -21,8 +22,9 @@ This repository now contains two coordinated components:
 
 ```
 autosizer/           # existing autosizer proxy project (Flask)
-macos_actions/       # new macOS automation gateway + documentation
+macos_actions/       # macOS automation gateway + documentation
   service/           # FastAPI app and helpers
+  scripts/today_events.py  # EventKit bridge for calendar occurrences
   config/actions.example.yml
   SETUP.md           # exhaustive setup instructions for host deployment
 ```
