@@ -65,8 +65,8 @@ Flask caps]
      curls the endpoint every hour, saving the result for the LLM to ingest.
 
 3. **Privacy boundary:**
-   - Only the gateway talks to macOS automation APIs; containers never run
-     AppleScript directly. All scripts are defined in `~/Library/Application Support/macos-actions/actions.yml` and gated by the API key.
+- Only the gateway talks to macOS automation APIs; containers never run
+  AppleScript directly. All scripts are defined in `~/Library/Application Support/macos_actions/actions.yml` and gated by the API key.
 
 ---
 
@@ -74,7 +74,7 @@ Flask caps]
 
 ### Phase A – Host Gateway Bring-Up
 
-1. Copy `macos_actions/` to the Mac (`~/macos-actions`).
+1. Copy `macos_actions/` to the Mac (`~/macos_actions`).
 2. Edit `actions.yml` to point at your existing AppleScripts and the bundled
    `scripts/today_events.py`.
 3. Create the virtualenv, install requirements (including PyObjC), run
@@ -118,7 +118,7 @@ Flask caps]
 
 | Scenario | Trigger | Expected Output | Primary Logs |
 |----------|---------|-----------------|--------------|
-| `/health` | curl | `scripts` list populated | `~/Library/Logs/macos-actions.out` |
+| `/health` | curl | `scripts` list populated | `~/Library/Logs/macos_actions.out` |
 | `unread_email_yesterday` script | curl | JSON/text describing threads | same |
 | Email digest report | curl | JSON with `unread`, `meetings`, `new_mail` keys | same |
 | Autosizer relay | WebUI tool | LLM sees digest text | autosizer container logs + mac logs |

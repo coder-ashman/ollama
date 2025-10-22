@@ -21,26 +21,26 @@ meetings produce the correct “today” occurrence times.
 
    - `~/Library/Scripts/LLM/unread_email_yesterday.scpt`
    - `~/Library/Scripts/LLM/new_mail_since_hour.scpt`
-   - `~/macos-actions/scripts/today_events.py` (provided)
+   - `~/macos_actions/scripts/today_events.py` (provided)
 
 ---
 
 ## 2. Copy the service files
 
 1. On your workstation, copy the `macos_actions/` directory from this repo to
-   the target Mac. Recommended destination: `~/macos-actions`.
+   the target Mac. Recommended destination: `~/macos_actions`.
 2. Ensure the EventKit helper is executable:
 
    ```bash
-   chmod +x ~/macos-actions/scripts/today_events.py
+   chmod +x ~/macos_actions/scripts/today_events.py
    ```
 
-3. Inside `~/macos-actions`, create the configuration folder:
+3. Inside `~/macos_actions`, create the configuration folder:
 
    ```bash
-   mkdir -p "${HOME}/Library/Application Support/macos-actions"
+   mkdir -p "${HOME}/Library/Application Support/macos_actions"
    cp macos_actions/config/actions.example.yml \
-      "${HOME}/Library/Application Support/macos-actions/actions.yml"
+      "${HOME}/Library/Application Support/macos_actions/actions.yml"
    ```
 
 4. Edit `actions.yml` and update each script path. For calendar meetings, keep
@@ -51,7 +51,7 @@ meetings produce the correct “today” occurrence times.
 ## 3. Prepare the dedicated virtual environment
 
 ```bash
-cd ~/macos-actions
+cd ~/macos_actions
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -78,7 +78,7 @@ Keep the virtualenv for the LaunchAgent step.
 > binary.
 
 ```bash
-source ~/macos-actions/.venv/bin/activate
+source ~/macos_actions/.venv/bin/activate
 python macos_actions/scripts/today_events.py
 ```
 
@@ -113,11 +113,11 @@ LaunchAgent environment instead. Keychain is recommended.)
 1. Start the API with uvicorn inside the virtualenv:
 
    ```bash
-   source ~/macos-actions/.venv/bin/activate
-   OSX_ACTIONS_KEY="$(security find-generic-password -s osx_actions_key -w)" \
-   OSX_ACTIONS_CONFIG="${HOME}/Library/Application Support/macos-actions/actions.yml" \
-   uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
-   ```
+   source ~/macos_actions/.venv/bin/activate
+OSX_ACTIONS_KEY="$(security find-generic-password -s osx_actions_key -w)" \
+OSX_ACTIONS_CONFIG="${HOME}/Library/Application Support/macos_actions/actions.yml" \
+uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
+```
 
 2. In another terminal, call the health endpoint:
 
@@ -153,54 +153,54 @@ Stop uvicorn once satisfied (Ctrl+C).
 ## 7. Install the LaunchAgent
 
 1. Create a wrapper script that loads the API key from Keychain and launches
-   uvicorn. Save as `~/macos-actions/bin/start-gateway.sh`:
+   uvicorn. Save as `~/macos_actions/bin/start-gateway.sh`:
 
    ```bash
-   mkdir -p ~/macos-actions/bin
-   cat <<'SH' > ~/macos-actions/bin/start-gateway.sh
-   #!/bin/bash
-   set -euo pipefail
-   BASE_DIR="$HOME/macos-actions"
-   source "$BASE_DIR/.venv/bin/activate"
-   export OSX_ACTIONS_CONFIG="$HOME/Library/Application Support/macos-actions/actions.yml"
-   export OSX_ACTIONS_KEY="$(/usr/bin/security find-generic-password -s osx_actions_key -w)"
-   exec uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
-   SH
-   chmod 700 ~/macos-actions/bin/start-gateway.sh
-   ```
+mkdir -p ~/macos_actions/bin
+cat <<'SH' > ~/macos_actions/bin/start-gateway.sh
+#!/bin/bash
+set -euo pipefail
+BASE_DIR="$HOME/macos_actions"
+source "$BASE_DIR/.venv/bin/activate"
+export OSX_ACTIONS_CONFIG="$HOME/Library/Application Support/macos_actions/actions.yml"
+export OSX_ACTIONS_KEY="$(/usr/bin/security find-generic-password -s osx_actions_key -w)"
+exec uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
+SH
+chmod 700 ~/macos_actions/bin/start-gateway.sh
+```
 
-2. Create `~/Library/LaunchAgents/com.you.macos-actions.plist`:
+2. Create `~/Library/LaunchAgents/com.you.macos_actions.plist`:
 
    ```xml
    <?xml version="1.0" encoding="UTF-8"?>
    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
    <plist version="1.0"><dict>
-     <key>Label</key><string>com.you.macos-actions</string>
+  <key>Label</key><string>com.you.macos_actions</string>
      <key>ProgramArguments</key>
      <array>
        <string>/bin/bash</string>
-       <string>$HOME/macos-actions/bin/start-gateway.sh</string>
+    <string>$HOME/macos_actions/bin/start-gateway.sh</string>
      </array>
      <key>RunAtLoad</key><true/>
      <key>KeepAlive</key><true/>
-     <key>StandardOutPath</key><string>$HOME/Library/Logs/macos-actions.out</string>
-     <key>StandardErrorPath</key><string>$HOME/Library/Logs/macos-actions.err</string>
+  <key>StandardOutPath</key><string>$HOME/Library/Logs/macos_actions.out</string>
+  <key>StandardErrorPath</key><string>$HOME/Library/Logs/macos_actions.err</string>
    </dict></plist>
    ```
 
 3. Load the agent:
 
    ```bash
-   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.you.macos-actions.plist
-   launchctl kickstart -k gui/$(id -u)/com.you.macos-actions
-   ```
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.you.macos_actions.plist
+launchctl kickstart -k gui/$(id -u)/com.you.macos_actions
+```
 
 4. Verify:
 
    ```bash
-   launchctl list | grep macos-actions
-   tail -f ~/Library/Logs/macos-actions.out
-   ```
+launchctl list | grep macos_actions
+tail -f ~/Library/Logs/macos_actions.out
+```
 
 macOS may prompt once to allow “start-gateway.sh” (or `osascript`) to control
 Mail/Calendar. Approve these prompts.
@@ -238,7 +238,7 @@ result to your LLM. A minimal hourly example:
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>com.you.macos-actions.hourly</string>
+  <key>Label</key><string>com.you.macos_actions.hourly</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/curl</string>

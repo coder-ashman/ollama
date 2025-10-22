@@ -1,4 +1,4 @@
-# Copy this file to ~/Library/Application Support/macos-actions/actions.yml
+# Copy this file to ~/Library/Application Support/macos_actions/actions.yml
 # and update the script paths to match your environment.
 
 scripts:
@@ -8,7 +8,7 @@ scripts:
     timeout: 120
   meetings_today:
     type: shell
-    path: "~/macos-actions/scripts/today_events.py"
+    path: "~/macos_actions/scripts/today_events.py"
     timeout: 90
   new_mail_recent:
     type: applescript

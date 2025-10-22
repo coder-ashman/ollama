@@ -41,7 +41,7 @@ class Settings(BaseModel):
 
 DEFAULT_CONFIG_LOCATIONS = (
     Path(os.getenv("OSX_ACTIONS_CONFIG", "")),
-    Path.home() / "Library" / "Application Support" / "macos-actions" / "actions.yml",
+    Path.home() / "Library" / "Application Support" / "macos_actions" / "actions.yml",
     Path(__file__).resolve().parent.parent / "config" / "actions.example.yml",
 )
 
@@ -54,7 +54,7 @@ def _load_yaml_config() -> Dict:
             return data
     raise FileNotFoundError(
         "No configuration file found. Set OSX_ACTIONS_CONFIG or place actions.yml in "
-        "~/Library/Application Support/macos-actions/."
+        "~/Library/Application Support/macos_actions/."
     )
 
 
