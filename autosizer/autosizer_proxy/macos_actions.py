@@ -85,7 +85,7 @@ def _invoke_script(script: str, payload: Optional[Dict[str, Any]] = None) -> Tup
     try:
         upstream = requests.post(
             url,
-            json=payload or {},
+            json={"params": payload or {}},
             headers=headers,
             timeout=OSX_ACTIONS_TIMEOUT,
         )

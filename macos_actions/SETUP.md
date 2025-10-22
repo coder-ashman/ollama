@@ -196,7 +196,7 @@ LaunchAgent environment instead. Keychain is recommended.)
    # Fetch detail (index 1 shown; adjust as needed)
    curl -X POST http://127.0.0.1:8765/scripts/meetings_today_detail/run \
      -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
-     -d '{"index": 1}'
+     -d '{"params": {"index": 1}}'
 
    # Optional weekend helper
    curl -X POST http://127.0.0.1:8765/scripts/fetch_weekend_emails/run \
