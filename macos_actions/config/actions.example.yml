@@ -18,6 +18,10 @@ scripts:
     type: shell
     path: "~/ollama/macos_actions/scripts/today_events.py"
     timeout: 90
+  meetings_today_detail:
+    type: shell
+    path: "~/ollama/macos_actions/scripts/today_events.py"
+    timeout: 90
 
 reports:
   email_digest:
