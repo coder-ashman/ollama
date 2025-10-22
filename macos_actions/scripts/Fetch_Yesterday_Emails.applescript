@@ -11,15 +11,16 @@ on collect_yesterday_messages()
 	set startWindow to startOfToday - 1 * days
 	set endWindow to startOfToday - 1
 	
-	set fragments to {}
-	
 	tell application "Mail"
 		set targetMailbox to mailbox "My Inbox" of account "Exchange"
 		set messageList to (every message of targetMailbox whose (date received is greater than or equal to startWindow) and (date received is less than or equal to endWindow))
-		repeat with eachMessage in messageList
-			set end of fragments to my message_fragment(eachMessage, targetMailbox)
-		end repeat
 	end tell
+	
+	set fragments to {}
+	set orderedMessages to my sort_messages(messageList)
+	repeat with eachMessage in orderedMessages
+		set end of fragments to my message_fragment(eachMessage, targetMailbox)
+	end repeat
 	
 	set AppleScript's text item delimiters to ","
 	set joined to ""
@@ -37,7 +38,7 @@ on message_fragment(msg, mb)
 		set readFlag to read status of msg
 		set dateText to my safe_text(date received of msg as string)
 		set mailboxText to my safe_text(name of mb as text)
-		set snippetText to my snippet_from_content(msg)
+		set bodyText to my safe_text(content of msg as text)
 	end using terms from
 	
 	set fragment to "{"
@@ -47,27 +48,12 @@ on message_fragment(msg, mb)
 	set fragment to fragment & ",\"message_id\":\"" & idText & "\""
 	set fragment to fragment & ",\"read\":" & (my bool_text(readFlag))
 	set fragment to fragment & ",\"mailbox\":\"" & mailboxText & "\""
-	if snippetText is not "" then
-		set fragment to fragment & ",\"snippet\":\"" & snippetText & "\""
+	if bodyText is not "" then
+		set fragment to fragment & ",\"body\":\"" & bodyText & "\""
 	end if
 	set fragment to fragment & "}"
 	return fragment
 end message_fragment
-
-on snippet_from_content(msg)
-	using terms from application "Mail"
-		set bodyText to ""
-		try
-			set bodyText to content of msg as text
-		on error
-			set bodyText to ""
-		end try
-	end using terms from
-	if bodyText is "" then return ""
-	set trimmed to my trim_whitespace(bodyText)
-	if (length of trimmed) > 200 then set trimmed to text 1 thru 200 of trimmed
-	return my escape_json(trimmed)
-end snippet_from_content
 
 on safe_text(candidate)
 	if candidate is missing value then return ""
@@ -97,31 +83,26 @@ on replace_text(findText, replaceText, sourceText)
 	return resultText
 end replace_text
 
-on trim_whitespace(t)
-	set charList to characters of t
-	repeat while (charList is not {}) and my is_whitespace(item 1 of charList)
-		if (count of charList) = 1 then
-			set charList to {}
-		else
-			set charList to rest of charList
-		end if
-		if charList is {} then return ""
+on sort_messages(msgList)
+	set sortedList to msgList
+	set itemCount to count of sortedList
+	if itemCount ≤ 1 then return sortedList
+	
+	repeat with i from 2 to itemCount
+		set currentMessage to item i of sortedList
+		using terms from application "Mail"
+			set currentDate to date received of currentMessage
+		end using terms from
+		set j to i - 1
+		repeat while j ≥ 1
+			using terms from application "Mail"
+				set compareDate to date received of item j of sortedList
+			end using terms from
+			if compareDate ≤ currentDate then exit repeat
+			set item (j + 1) of sortedList to item j of sortedList
+			set j to j - 1
+		end repeat
+		set item (j + 1) of sortedList to currentMessage
 	end repeat
-	repeat while (charList is not {}) and my is_whitespace(item -1 of charList)
-		if (count of charList) = 1 then
-			set charList to {}
-		else
-			set charList to items 1 thru -2 of charList
-		end if
-		if charList is {} then return ""
-	end repeat
-	return charList as text
-end trim_whitespace
-
-on is_whitespace(ch)
-	if ch is space then return true
-	if ch is tab then return true
-	if ch is return then return true
-	if ch is linefeed then return true
-	return false
-end is_whitespace
+	return sortedList
+end sort_messages
