@@ -10,8 +10,17 @@ from .models import ScriptResult
 def _render_args(params: Dict[str, Any]) -> Tuple[str, ...]:
     if not params:
         return tuple()
-    # Preserve order of insertion (Python3.7+ dicts are ordered)
-    return tuple(str(value) for value in params.values())
+
+    rendered: list[str] = []
+    for key, value in params.items():
+        flag = f"--{str(key).replace('_', '-')}"
+        if isinstance(value, bool):
+            if value:
+                rendered.append(flag)
+            continue
+        rendered.append(flag)
+        rendered.append(str(value))
+    return tuple(rendered)
 
 
 def _maybe_parse_json(payload: str) -> Any:

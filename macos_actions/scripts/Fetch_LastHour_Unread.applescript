@@ -89,10 +89,56 @@ end start_of_day
 on parse_hours_argument(argv)
 	if argv is missing value then return DEFAULT_LOOKBACK_HOURS
 	if (class of argv is not list) then return DEFAULT_LOOKBACK_HOURS
-	if (count of argv) is 0 then return DEFAULT_LOOKBACK_HOURS
 	
-	set rawValue to item 1 of argv
-	set cleaned to my trim_whitespace(rawValue)
+	set tokens to {}
+	repeat with argItem in argv
+		set argText to my trim_whitespace(argItem)
+		if argText is not "" then set end of tokens to argText
+	end repeat
+	if tokens is {} then return DEFAULT_LOOKBACK_HOURS
+	
+	set hoursText to missing value
+	
+	set idx to 1
+	repeat while idx ≤ count of tokens
+		set token to item idx of tokens
+		if token starts with "--hours=" then
+			if (count characters of token) > 8 then
+				set hoursText to text 9 thru -1 of token
+			else
+				set hoursText to ""
+			end if
+			exit repeat
+		else if token = "--hours" then
+			if idx < count of tokens then
+				set hoursText to item (idx + 1) of tokens
+			end if
+			exit repeat
+		else if token = "--lookback" then
+			if idx < count of tokens then
+				set hoursText to item (idx + 1) of tokens
+			end if
+			exit repeat
+		else if token starts with "--lookback=" then
+			if (count characters of token) > 11 then
+				set hoursText to text 12 thru -1 of token
+			else
+				set hoursText to ""
+			end if
+			exit repeat
+		end if
+		set idx to idx + 1
+	end repeat
+	
+	if hoursText is missing value then
+		set candidate to item 1 of tokens
+		if candidate does not start with "--" then
+			set hoursText to candidate
+		end if
+	end if
+	
+	if hoursText is missing value then return DEFAULT_LOOKBACK_HOURS
+	set cleaned to my trim_whitespace(hoursText)
 	if cleaned is "" then return DEFAULT_LOOKBACK_HOURS
 	set charCount to count characters of cleaned
 	if charCount < 1 or charCount > 2 then return DEFAULT_LOOKBACK_HOURS

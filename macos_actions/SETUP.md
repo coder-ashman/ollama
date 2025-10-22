@@ -328,6 +328,9 @@ Mail/Calendar. Approve these prompts.
 - `unread_last_hour` now accepts an optional two-digit hour argument to limit the
   window (e.g., `unread_last_hour(06)` or `{"script":"unread_last_hour","payload":{"hours":"06"}}`).
   When omitted or blank it pulls unread mail from midnight to the present.
+- `meetings_today` accepts an optional start time (e.g.,
+  `{"script":"meetings_today","payload":{"start_time":"01:00 PM"}}`) to only
+  return events beginning at or after that time.
 - Responses for the unread inbox scripts now include `window.start`, `window.end`,
   and `window.hours_back` metadata so you can confirm the range the gateway used.
 - Direct calls to `/scripts/...` continue to return raw JSON. Use the autosizer proxy
@@ -338,6 +341,15 @@ Mail/Calendar. Approve these prompts.
 - The gateway scripts can take a minute to finish when Mail has a large batch.
   Increase `OSX_ACTIONS_TIMEOUT` (seconds) in the autosizer environment block if
   you still encounter HTTP read timeouts.
+
+### Briefing shortcuts
+
+- `morning_briefing` runs `meetings_today` and `unread_last_hour` back-to-back and
+  returns a combined Markdown digest in one call.
+- `afternoon_briefing` does the same but defaults to
+  `meetings_today` with a `start_time` of `01:00 PM` plus `unread_last_hour(01)`.
+  Provide `{"start_time":"02:30 PM"}` (or call `afternoon_briefing("02:30 PM")`) to
+  override the meetings cut-off while keeping the one-hour mail sweep.
 
 ---
 

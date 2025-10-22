@@ -55,7 +55,7 @@ def _lookup_script(script: str) -> Optional[Tuple[str, str]]:
     return key, endpoint
 
 
-def _invoke_script(script: str, payload: Optional[Dict[str, Any]] = None) -> Tuple[int, str, bytes, Optional[str]]:
+def _invoke_single_script(script: str, payload: Optional[Dict[str, Any]] = None) -> Tuple[int, str, bytes, Optional[str]]:
     base = _base_url()
     if not base:
         return (
@@ -108,6 +108,86 @@ def _invoke_script(script: str, payload: Optional[Dict[str, Any]] = None) -> Tup
 
     mimetype = upstream.headers.get("Content-Type", "application/json")
     return upstream.status_code, mimetype or "application/json", upstream.content, normalized
+
+
+def _run_briefing(script: str, payload: Optional[Dict[str, Any]]) -> Tuple[int, str, bytes, Optional[str]]:
+    kind = script.strip().lower()
+    payload = payload or {}
+
+    if kind == "morning_briefing":
+        components = [
+            ("meetings_today", None),
+            ("unread_last_hour", None),
+        ]
+        title = "### 🌅 Morning Briefing"
+    elif kind == "afternoon_briefing":
+        start_time = payload.get("start_time") if isinstance(payload, dict) else None
+        if not isinstance(start_time, str) or not start_time.strip():
+            start_time = "01:00 PM"
+        components = [
+            ("meetings_today", {"start_time": start_time}),
+            ("unread_last_hour", {"hours": "01"}),
+        ]
+        title = "### 🌇 Afternoon Briefing"
+    else:
+        return (
+            404,
+            "application/json",
+            json.dumps({"error": f"unknown briefing '{script}'"}).encode("utf-8"),
+            None,
+        )
+
+    sections: List[str] = []
+    component_details: Dict[str, Any] = {}
+
+    for name, component_payload in components:
+        status, mimetype, content, normalized = _invoke_single_script(name, component_payload)
+        if status != 200:
+            return status, mimetype, content, normalized
+
+        try:
+            raw_data = json.loads(content.decode("utf-8", errors="replace"))
+        except json.JSONDecodeError:
+            raw_data = None
+
+        component_text = _format_script_message(
+            normalized or name,
+            status,
+            mimetype,
+            content,
+            suppress_header=True,
+        )
+        sections.append(component_text.strip())
+        component_details[name] = {
+            "payload": component_payload or {},
+            "body": component_text.strip(),
+            "raw": raw_data,
+        }
+
+    divider = "\n\n---\n\n"
+    combined = f"{title}\n\n{divider.join(section for section in sections if section)}"
+
+    payload_dict = {
+        "ok": True,
+        "parsed": {
+            "markdown": combined,
+            "components": component_details,
+            "title": title,
+        },
+    }
+    return (
+        200,
+        "application/json",
+        json.dumps(payload_dict, ensure_ascii=False).encode("utf-8"),
+        kind,
+    )
+
+
+def _invoke_script(script: str, payload: Optional[Dict[str, Any]] = None) -> Tuple[int, str, bytes, Optional[str]]:
+    normalized = (script or "").strip().lower()
+    if normalized in {"morning_briefing", "afternoon_briefing"}:
+        return _run_briefing(normalized, payload)
+    return _invoke_single_script(script, payload)
 
 
 def call_script(script: str, payload: Optional[Dict[str, Any]] = None) -> Response:
@@ -166,6 +246,11 @@ def _parse_script_command(content: str) -> Optional[Tuple[str, Dict[str, Any]]]:
             if payload is None:
                 return None
             return (name, payload)
+
+        if name == "afternoon_briefing":
+            cleaned = args.strip().strip("'\"")
+            if cleaned:
+                return (name, {"start_time": cleaned})
 
         if re.fullmatch(r"\d+", args):
             return (name, {"index": int(args)})
@@ -740,7 +825,11 @@ def _is_me_required(event: Dict[str, Any]) -> bool:
     return False
 
 
-def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
+def _render_meetings_summary(
+    events: List[Dict[str, Any]],
+    start_filter_iso: Optional[str] = None,
+    start_filter_label: Optional[str] = None,
+) -> str:
     filtered_events = [
         event for event in events if not _event_should_skip(event)
     ]
@@ -754,6 +843,16 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
     first_with_start = next((ev for ev in filtered_events if ev.get("start")), None)
     dt = _parse_iso(first_with_start.get("start")) if first_with_start else None
     heading = f"Meetings for {dt.strftime('%A, %B %d').replace(' 0', ' ')}" if dt else "Today's Meetings"
+
+    filter_time_label: Optional[str] = None
+    if start_filter_iso:
+        parsed_filter = _parse_iso(start_filter_iso)
+        if parsed_filter:
+            filter_time_label = _format_clock(parsed_filter)
+    if not filter_time_label and start_filter_label:
+        filter_time_label = start_filter_label
+    if filter_time_label:
+        heading = f"{heading} (from {filter_time_label})"
 
     total = len(filtered_events)
     earliest = _parse_iso(filtered_events[0].get("start"))
@@ -882,13 +981,22 @@ def _format_script_message(
     payload_bytes: bytes,
     *,
     model: Optional[str] = None,
+    suppress_header: bool = False,
 ) -> str:
     decoded = payload_bytes.decode("utf-8", errors="replace").strip()
     heading = f"macOS Actions :: {script}"
 
+    def combine_output(body_text: str) -> str:
+        body_clean = (body_text or "").strip()
+        if suppress_header or not heading:
+            return body_clean or heading
+        if body_clean:
+            return f"{heading}\n\n{body_clean}"
+        return heading
+
     if status != 200:
         details = decoded or "No details provided."
-        return f"{heading} (HTTP {status})\n\n{details}"
+        return combine_output(f"(HTTP {status})\n\n{details}")
 
     if "json" in (mimetype or "").lower():
         try:
@@ -901,6 +1009,19 @@ def _format_script_message(
             parsed = data.get("parsed")
             stdout = data.get("stdout")
             stderr = data.get("stderr")
+
+            if script in {"morning_briefing", "afternoon_briefing"} and isinstance(parsed, dict):
+                markdown = parsed.get("markdown")
+                if not isinstance(markdown, str):
+                    markdown = stdout or json.dumps(parsed, indent=2, ensure_ascii=False)
+                if stderr:
+                    markdown = f"{markdown}\n\n[stderr]\n{stderr}"
+                title = parsed.get("title")
+                if isinstance(title, str) and title.strip():
+                    heading = title.strip()
+                if not ok_flag:
+                    heading = f"{heading} (failed)"
+                return combine_output(markdown)
 
             if script in {"fetch_yesterday_emails", "fetch_weekend_emails", "unread_last_hour"}:
                 payload_dict: Optional[Dict[str, Any]] = parsed if isinstance(parsed, dict) else None
@@ -931,7 +1052,7 @@ def _format_script_message(
                     summary_text = f"{summary_text}\n\n[stderr]\n{stderr}"
                 if not ok_flag:
                     heading = f"{heading} (failed)"
-                return f"{heading}\n\n{summary_text}"
+                return combine_output(summary_text)
 
             if script in {"meetings_today", "meetings_today_detail"} and isinstance(parsed, dict):
                 payload_ok = parsed.get("ok", True)
@@ -939,11 +1060,15 @@ def _format_script_message(
                     error_body = parsed.get("error") or stdout or json.dumps(data, indent=2, ensure_ascii=False)
                     if stderr:
                         error_body = f"{error_body}\n\n[stderr]\n{stderr}"
-                    return f"{heading} (failed)\n\n{error_body}"
+                    heading_failed = f"{heading} (failed)"
+                    heading = heading_failed
+                    return combine_output(error_body)
 
                 if script == "meetings_today":
                     events = parsed.get("events") or []
-                    return f"{heading}\n\n{_render_meetings_summary(events)}"
+                    start_iso = parsed.get("start_filter") if isinstance(parsed, dict) else None
+                    start_label = parsed.get("start_filter_label") if isinstance(parsed, dict) else None
+                    return combine_output(_render_meetings_summary(events, start_iso, start_label))
 
                 event_detail = _extract_event(parsed)
                 if not isinstance(event_detail, dict):
@@ -965,8 +1090,8 @@ def _format_script_message(
                         event_detail = _extract_event(stdout_payload)
 
                 if isinstance(event_detail, dict):
-                    return f"{heading}\n\n{_render_meeting_detail(event_detail)}"
-                return f"{heading}\n\n_No meeting detail available._"
+                    return combine_output(_render_meeting_detail(event_detail))
+                return combine_output("_No meeting detail available._")
 
             if parsed is not None:
                 body = _pretty(parsed)
@@ -981,10 +1106,10 @@ def _format_script_message(
             if not ok_flag:
                 heading = f"{heading} (failed)"
 
-            return f"{heading}\n\n{body.strip() or '[no output]'}"
+            return combine_output(body.strip() or "[no output]")
 
     body_text = decoded or "[no output]"
-    return f"{heading}\n\n{body_text}"
+    return combine_output(body_text)
 
 
 def _chat_response(content: str, model: Optional[str]) -> Response:

@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Return today's calendar events (including recurring occurrences) as JSON.
 
-The script can optionally accept an event index (1-based) to emit a single
-expanded record. When no index is supplied it returns the full list for today.
+The script accepts optional arguments:
+
+- ``--index <N>`` (or simply ``N``) to emit a single expanded record.
+- ``--start-time <HH:MM AM/PM>`` to filter events that begin at or after the
+  supplied local time.
+
+When no options are provided it returns the full list for today.
 """
 
 import json
@@ -126,7 +131,7 @@ def render_event_record(event, ordinal: int) -> Dict[str, Any]:
     return record
 
 
-def build_event_payload(store: EKEventStore) -> List[Dict[str, Any]]:
+def build_event_payload(store: EKEventStore, start_filter: Optional[datetime] = None) -> List[Dict[str, Any]]:
     now = datetime.now(tz=LOCAL_TZ)
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_day = start_of_day + timedelta(days=1)
@@ -140,38 +145,106 @@ def build_event_payload(store: EKEventStore) -> List[Dict[str, Any]]:
     events = store.eventsMatchingPredicate_(predicate) or []
     events.sort(key=lambda ev: ev.startDate())
 
-    return [render_event_record(ev, idx) for idx, ev in enumerate(events, start=1)]
+    filtered_events = []
+    for event in events:
+        if start_filter is not None:
+            event_start_nsdate = event.startDate()
+            if event_start_nsdate is None:
+                continue
+            event_start = datetime.fromtimestamp(event_start_nsdate.timeIntervalSince1970(), tz=LOCAL_TZ)
+            if event_start < start_filter:
+                continue
+        filtered_events.append(event)
+
+    return [render_event_record(ev, idx) for idx, ev in enumerate(filtered_events, start=1)]
 
 
-def parse_index_argument(argv: List[str]) -> Optional[int]:
-    if not argv:
-        return None
-
-    tokens = list(argv)
-    if tokens[0] == "--index" and len(tokens) >= 2:
-        tokens = [tokens[1]]
-
-    candidate = tokens[0]
-    if candidate.startswith("--index="):
-        candidate = candidate.split("=", 1)[1]
-
+def _coerce_positive_int(value: Any) -> Optional[int]:
     try:
-        index = int(candidate)
-    except ValueError:
+        candidate = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return candidate if candidate > 0 else None
+
+
+def parse_cli_arguments(argv: List[str]) -> Tuple[Optional[int], Optional[str]]:
+    if not argv:
+        return None, None
+
+    detail_index: Optional[int] = None
+    start_time_value: Optional[str] = None
+
+    normalized_args = [str(token) for token in argv if str(token).strip()]
+    i = 0
+    while i < len(normalized_args):
+        token = normalized_args[i].strip()
+        lower = token.lower()
+
+        if lower == "--index":
+            if i + 1 < len(normalized_args):
+                maybe = _coerce_positive_int(normalized_args[i + 1])
+                if maybe is not None:
+                    detail_index = maybe
+                i += 1
+        elif lower.startswith("--index="):
+            maybe = _coerce_positive_int(token.split("=", 1)[1])
+            if maybe is not None:
+                detail_index = maybe
+        elif lower == "--start-time" or lower == "--start":
+            if i + 1 < len(normalized_args):
+                start_time_value = normalized_args[i + 1]
+                i += 1
+        elif lower.startswith("--start-time="):
+            start_time_value = token.split("=", 1)[1]
+        elif lower.startswith("--start="):
+            start_time_value = token.split("=", 1)[1]
+        else:
+            maybe_index = _coerce_positive_int(token)
+            if maybe_index is not None and detail_index is None:
+                detail_index = maybe_index
+            elif start_time_value is None:
+                start_time_value = token
+        i += 1
+
+    start_time_value = start_time_value.strip() if start_time_value else None
+    return detail_index, start_time_value
+
+
+def resolve_start_filter(start_value: Optional[str]) -> Optional[datetime]:
+    if not start_value:
         return None
 
-    return index if index > 0 else None
+    cleaned = start_value.strip()
+    if not cleaned:
+        return None
+
+    for fmt in ("%I:%M %p", "%I:%M%p", "%H:%M"):
+        try:
+            parsed = datetime.strptime(cleaned, fmt)
+            break
+        except ValueError:
+            parsed = None
+    else:
+        parsed = None
+
+    if parsed is None:
+        return None
+
+    current = datetime.now(tz=LOCAL_TZ)
+    start_of_day = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_of_day.replace(hour=parsed.hour, minute=parsed.minute)
 
 
 def main():
-    detail_index = parse_index_argument(sys.argv[1:])
+    detail_index, start_time_value = parse_cli_arguments(sys.argv[1:])
+    start_filter = resolve_start_filter(start_time_value)
 
     store = EKEventStore.alloc().init()
     if not request_calendar_access(store):
         print(json.dumps({"ok": False, "error": "calendar access not granted"}))
         return
 
-    records = build_event_payload(store)
+    records = build_event_payload(store, start_filter=start_filter)
 
     if detail_index is not None:
         match = next((item for item in records if item["ordinal"] == detail_index), None)
@@ -182,9 +255,18 @@ def main():
                 "events_count": len(records),
             }
         else:
-            payload = {"ok": True, "event": match, "events_count": len(records)}
+            payload = {
+                "ok": True,
+                "event": match,
+                "events_count": len(records),
+            }
     else:
         payload = {"ok": True, "events": records}
+
+    if start_filter is not None:
+        payload["start_filter"] = start_filter.isoformat()
+        if start_time_value:
+            payload["start_filter_label"] = start_time_value
 
     print(json.dumps(payload, ensure_ascii=False))
 
