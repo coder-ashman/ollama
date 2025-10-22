@@ -325,6 +325,9 @@ Mail/Calendar. Approve these prompts.
 - `OSX_ACTIONS_SELF` / `OSX_ACTIONS_SELF_ALIASES` help the formatter recognise
   when *you* authored or are required on a thread. Supply comma-separated
   usernames/emails; include nicknames if you reply from aliases.
+- `unread_last_hour` now accepts an optional two-digit hour argument to limit the
+  window (e.g., `unread_last_hour(06)` or `{"script":"unread_last_hour","payload":{"hours":"06"}}`).
+  When omitted or blank it pulls unread mail from midnight to the present.
 - If the LLM call fails, the proxy falls back to a basic per-thread outline so
   you still see raw highlights. Check the autosizer logs for
   `Email summary LLM request failed` to diagnose network or credentials issues.

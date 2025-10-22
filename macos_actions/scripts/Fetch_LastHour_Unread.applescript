@@ -1,13 +1,15 @@
 use AppleScript version "2.8"
 use scripting additions
 
-on run
-	return my collect_unread_last_hour()
+property DEFAULT_LOOKBACK_HOURS : missing value
+
+on run argv
+	return my collect_unread_last_hour(argv)
 end run
 
-on collect_unread_last_hour()
+on collect_unread_last_hour(argv)
 	set nowDate to current date
-	set startWindow to nowDate - 1 * hours
+	set startWindow to my resolve_start_window(nowDate, argv)
 	
 	set folderNames to {}
 	set messageBatches to {}
@@ -51,6 +53,79 @@ on collect_unread_last_hour()
 	
 	return "{\"messages\":[" & joined & "]}"
 end collect_unread_last_hour
+
+on resolve_start_window(nowDate, argv)
+	set midnightAnchor to my start_of_day(nowDate)
+	set hoursBack to my parse_hours_argument(argv)
+	if hoursBack is missing value then return midnightAnchor
+	
+	try
+		return nowDate - (hoursBack * hours)
+	on error
+		return midnightAnchor
+	end try
+end resolve_start_window
+
+on start_of_day(nowDate)
+	copy nowDate to startRef
+	set time of startRef to 0
+	return startRef
+end start_of_day
+
+on parse_hours_argument(argv)
+	if argv is missing value then return DEFAULT_LOOKBACK_HOURS
+	if (class of argv is not list) then return DEFAULT_LOOKBACK_HOURS
+	if (count of argv) is 0 then return DEFAULT_LOOKBACK_HOURS
+	
+	set rawValue to item 1 of argv
+	set cleaned to my trim_whitespace(rawValue)
+	if cleaned is "" then return DEFAULT_LOOKBACK_HOURS
+	set charCount to count characters of cleaned
+	if charCount < 1 or charCount > 2 then return DEFAULT_LOOKBACK_HOURS
+	
+	try
+		set hoursBack to cleaned as integer
+	on error
+		return DEFAULT_LOOKBACK_HOURS
+	end try
+	
+	if hoursBack ≤ 0 then return DEFAULT_LOOKBACK_HOURS
+	return hoursBack
+end parse_hours_argument
+
+on trim_whitespace(candidate)
+	if candidate is missing value then return ""
+	set textValue to candidate as text
+	if textValue is "" then return ""
+	
+	set whitespaceChars to {" ", tab, return, linefeed}
+	set startIndex to 1
+	set endIndex to count of textValue
+	
+	repeat while startIndex ≤ endIndex
+		set currentChar to character startIndex of textValue
+		if currentChar is in whitespaceChars then
+			set startIndex to startIndex + 1
+		else
+			exit repeat
+		end if
+	end repeat
+	
+	repeat while endIndex ≥ startIndex
+		set currentChar to character endIndex of textValue
+		if currentChar is in whitespaceChars then
+			set endIndex to endIndex - 1
+		else
+			exit repeat
+		end if
+	end repeat
+	
+	if startIndex > endIndex then
+		return ""
+	else
+		return text startIndex thru endIndex of textValue
+	end if
+end trim_whitespace
 
 on message_fragment(msg, mailboxName)
 	using terms from application "Mail"

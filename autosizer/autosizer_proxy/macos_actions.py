@@ -158,6 +158,9 @@ def _parse_script_command(content: str) -> Optional[Tuple[str, Dict[str, Any]]]:
         if not args:
             return (name, {})
 
+        if name == "unread_last_hour" and re.fullmatch(r"\d{1,2}", args):
+            return (name, {"hours": args.zfill(2)})
+
         if args.startswith("{") and args.endswith("}"):
             payload = _parse_payload(args)
             if payload is None:
