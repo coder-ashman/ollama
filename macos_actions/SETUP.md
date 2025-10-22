@@ -21,21 +21,21 @@ meetings produce the correct “today” occurrence times.
 
    - `~/Library/Scripts/LLM/unread_email_yesterday.scpt`
    - `~/Library/Scripts/LLM/new_mail_since_hour.scpt`
-   - `~/macos_actions/scripts/today_events.py` (provided)
+   - `~/ollama/macos_actions/scripts/today_events.py` (provided)
 
 ---
 
 ## 2. Copy the service files
 
 1. On your workstation, copy the `macos_actions/` directory from this repo to
-   the target Mac. Recommended destination: `~/macos_actions`.
+   the target Mac. Recommended destination: `~/ollama/macos_actions`.
 2. Ensure the EventKit helper is executable:
 
    ```bash
-   chmod +x ~/macos_actions/scripts/today_events.py
+   chmod +x ~/ollama/macos_actions/scripts/today_events.py
    ```
 
-3. Inside `~/macos_actions`, create the configuration folder:
+3. Inside `~/ollama/macos_actions`, create the configuration folder:
 
    ```bash
    mkdir -p "${HOME}/Library/Application Support/macos_actions"
@@ -51,7 +51,7 @@ meetings produce the correct “today” occurrence times.
 ## 3. Prepare the dedicated virtual environment
 
 ```bash
-cd ~/macos_actions
+cd ~/ollama/macos_actions
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -78,7 +78,7 @@ Keep the virtualenv for the LaunchAgent step.
 > binary.
 
 ```bash
-source ~/macos_actions/.venv/bin/activate
+source ~/ollama/macos_actions/.venv/bin/activate
 python macos_actions/scripts/today_events.py
 ```
 
@@ -113,7 +113,7 @@ LaunchAgent environment instead. Keychain is recommended.)
 1. Start the API with uvicorn inside the virtualenv:
 
    ```bash
-   source ~/macos_actions/.venv/bin/activate
+   source ~/ollama/macos_actions/.venv/bin/activate
    OSX_ACTIONS_KEY="$(security find-generic-password -s osx_actions_key -w)"
    OSX_ACTIONS_CONFIG="${HOME}/Library/Application Support/macos_actions/actions.yml"
    uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
@@ -153,20 +153,20 @@ Stop uvicorn once satisfied (Ctrl+C).
 ## 7. Install the LaunchAgent
 
 1. Create a wrapper script that loads the API key from Keychain and launches
-   uvicorn. Save as `~/macos_actions/bin/start-gateway.sh`:
+   uvicorn. Save as `~/ollama/macos_actions/bin/start-gateway.sh`:
 
    ```bash
-   mkdir -p ~/macos_actions/bin
-   cat <<'SH' > ~/macos_actions/bin/start-gateway.sh
+   mkdir -p ~/ollama/macos_actions/bin
+   cat <<'SH' > ~/ollama/macos_actions/bin/start-gateway.sh
    #!/bin/bash
    set -euo pipefail
-   BASE_DIR="$HOME/macos_actions"
+   BASE_DIR="$HOME/ollama/macos_actions"
    source "$BASE_DIR/.venv/bin/activate"
    export OSX_ACTIONS_CONFIG="$HOME/Library/Application Support/macos_actions/actions.yml"
    export OSX_ACTIONS_KEY="$(/usr/bin/security find-generic-password -s osx_actions_key -w)"
    exec uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
    SH
-   chmod 700 ~/macos_actions/bin/start-gateway.sh
+   chmod 700 ~/ollama/macos_actions/bin/start-gateway.sh
    ```
 
 2. Create `~/Library/LaunchAgents/com.you.macos_actions.plist`:
@@ -179,7 +179,7 @@ Stop uvicorn once satisfied (Ctrl+C).
      <key>ProgramArguments</key>
      <array>
        <string>/bin/bash</string>
-    <string>$HOME/macos_actions/bin/start-gateway.sh</string>
+    <string>$HOME/ollama/macos_actions/bin/start-gateway.sh</string>
      </array>
      <key>RunAtLoad</key><true/>
      <key>KeepAlive</key><true/>

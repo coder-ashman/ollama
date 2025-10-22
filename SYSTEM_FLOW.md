@@ -74,7 +74,7 @@ Flask caps]
 
 ### Phase A – Host Gateway Bring-Up
 
-1. Copy `macos_actions/` to the Mac (`~/macos_actions`).
+1. Copy `macos_actions/` to the Mac (`~/ollama/macos_actions`).
 2. Edit `actions.yml` to point at your existing AppleScripts and the bundled
    `scripts/today_events.py`.
 3. Create the virtualenv, install requirements (including PyObjC), run

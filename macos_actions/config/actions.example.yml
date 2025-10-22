@@ -8,7 +8,7 @@ scripts:
     timeout: 120
   meetings_today:
     type: shell
-    path: "~/macos_actions/scripts/today_events.py"
+    path: "~/ollama/macos_actions/scripts/today_events.py"
     timeout: 90
   new_mail_recent:
     type: applescript
