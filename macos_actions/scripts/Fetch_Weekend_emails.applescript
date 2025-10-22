@@ -104,8 +104,12 @@ end replace_text
 on trim_whitespace(t)
 	set charList to characters of t
 	repeat while (charList is not {}) and my is_whitespace(item 1 of charList)
-		set charList to rest of charList
-	if charList is {} then return ""
+		if (count of charList) = 1 then
+			set charList to {}
+		else
+			set charList to rest of charList
+		end if
+		if charList is {} then return ""
 	repeat while (charList is not {}) and my is_whitespace(item -1 of charList)
 		if (count of charList) = 1 then
 			set charList to {}
