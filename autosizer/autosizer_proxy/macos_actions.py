@@ -294,7 +294,10 @@ def _format_blockquote(text: str) -> str:
 
 
 _SELF_IDENTIFIERS: List[str] = []
-for chunk in (OSX_ACTIONS_SELF, OSX_ACTIONS_SELF_ALIASES):
+for chunk in (
+    globals().get("OSX_ACTIONS_SELF", "") or "",
+    globals().get("OSX_ACTIONS_SELF_ALIASES", "") or "",
+):
     if not chunk:
         continue
     for token in re.split(r"[,\n;]+", chunk):
