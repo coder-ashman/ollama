@@ -15,24 +15,31 @@ on collect_weekend_messages()
 	set startWindow to cursorDate
 	set endWindow to cursorDate + 3 * days - 1
 	
+	set folderNames to {}
+	set messageBatches to {}
+	
 	tell application "Mail"
 		set exchangeAccount to account "Exchange"
-		set foldersToScan to {mailbox "Rajesh Jayaraj" of exchangeAccount, ¬
-			mailbox "Cassie Pizzurro" of exchangeAccount, ¬
-			mailbox "My Inbox" of exchangeAccount}
-		set allMessages to {}
-		set allMeta to {}
-		repeat with mb in foldersToScan
-			set messageList to (every message of mb whose (date received is greater than or equal to startWindow) and (date received is less than or equal to endWindow))
-			set end of allMessages to messageList
-			set end of allMeta to name of mb as text
+		set parentMailbox to mailbox "My Inbox" of exchangeAccount
+		repeat with folderLabel in {"Rajesh Jayaraj", "Cassie Pizzurro"}
+			try
+				set childMailbox to mailbox folderLabel of parentMailbox
+				set end of folderNames to (name of childMailbox as text)
+				set msgList to (every message of childMailbox whose (date received is greater than or equal to startWindow) and (date received is less than or equal to endWindow))
+				set end of messageBatches to msgList
+			on error
+				-- subfolder missing; skip
+			end try
 		end repeat
+		set end of folderNames to (name of parentMailbox as text)
+		set msgList to (every message of parentMailbox whose (date received is greater than or equal to startWindow) and (date received is less than or equal to endWindow))
+		set end of messageBatches to msgList
 	end tell
 	
 	set fragments to {}
-	repeat with idx from 1 to count of allMessages
-		set mailboxMessages to item idx of allMessages
-		set mailboxName to item idx of allMeta
+	repeat with idx from 1 to count of messageBatches
+		set mailboxMessages to item idx of messageBatches
+		set mailboxName to item idx of folderNames
 		set orderedMessages to my sort_messages(mailboxMessages)
 		repeat with eachMessage in orderedMessages
 			set end of fragments to my message_fragment(eachMessage, mailboxName)
