@@ -114,10 +114,10 @@ LaunchAgent environment instead. Keychain is recommended.)
 
    ```bash
    source ~/macos_actions/.venv/bin/activate
-OSX_ACTIONS_KEY="$(security find-generic-password -s osx_actions_key -w)" \
-OSX_ACTIONS_CONFIG="${HOME}/Library/Application Support/macos_actions/actions.yml" \
-uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
-```
+   OSX_ACTIONS_KEY="$(security find-generic-password -s osx_actions_key -w)"
+   OSX_ACTIONS_CONFIG="${HOME}/Library/Application Support/macos_actions/actions.yml"
+   uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
+   ```
 
 2. In another terminal, call the health endpoint:
 
@@ -156,18 +156,18 @@ Stop uvicorn once satisfied (Ctrl+C).
    uvicorn. Save as `~/macos_actions/bin/start-gateway.sh`:
 
    ```bash
-mkdir -p ~/macos_actions/bin
-cat <<'SH' > ~/macos_actions/bin/start-gateway.sh
-#!/bin/bash
-set -euo pipefail
-BASE_DIR="$HOME/macos_actions"
-source "$BASE_DIR/.venv/bin/activate"
-export OSX_ACTIONS_CONFIG="$HOME/Library/Application Support/macos_actions/actions.yml"
-export OSX_ACTIONS_KEY="$(/usr/bin/security find-generic-password -s osx_actions_key -w)"
-exec uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
-SH
-chmod 700 ~/macos_actions/bin/start-gateway.sh
-```
+   mkdir -p ~/macos_actions/bin
+   cat <<'SH' > ~/macos_actions/bin/start-gateway.sh
+   #!/bin/bash
+   set -euo pipefail
+   BASE_DIR="$HOME/macos_actions"
+   source "$BASE_DIR/.venv/bin/activate"
+   export OSX_ACTIONS_CONFIG="$HOME/Library/Application Support/macos_actions/actions.yml"
+   export OSX_ACTIONS_KEY="$(/usr/bin/security find-generic-password -s osx_actions_key -w)"
+   exec uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
+   SH
+   chmod 700 ~/macos_actions/bin/start-gateway.sh
+   ```
 
 2. Create `~/Library/LaunchAgents/com.you.macos_actions.plist`:
 
@@ -191,16 +191,16 @@ chmod 700 ~/macos_actions/bin/start-gateway.sh
 3. Load the agent:
 
    ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.you.macos_actions.plist
-launchctl kickstart -k gui/$(id -u)/com.you.macos_actions
-```
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.you.macos_actions.plist
+   launchctl kickstart -k gui/$(id -u)/com.you.macos_actions
+   ```
 
 4. Verify:
 
    ```bash
-launchctl list | grep macos_actions
-tail -f ~/Library/Logs/macos_actions.out
-```
+   launchctl list | grep macos_actions
+   tail -f ~/Library/Logs/macos_actions.out
+   ```
 
 macOS may prompt once to allow “start-gateway.sh” (or `osascript`) to control
 Mail/Calendar. Approve these prompts.
