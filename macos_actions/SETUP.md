@@ -11,17 +11,25 @@ meetings produce the correct “today” occurrence times.
 
 1. **macOS account:** use the user account that will run the automations (admin
    not required).
-2. **Python 3.11+** installed via Xcode Command Line Tools or your corporate
-   package manager (`python3 --version`).
-3. **AppleScripts for mail:** keep the unread/new-mail AppleScripts you already
-   use. They should return plain text or JSON when run via `osascript`.
+2. **Python 3.11** installed via your corporate package manager or Homebrew
+   (`python3 --version`). *As of 2025-10-22 the EventKit bridge depends on
+   PyObjC 12, which provides wheels up through Python 3.11; newer interpreters
+   (3.12/3.13/3.14) are not yet supported and will cause installations to fail.*
+   If you previously created `.venv` with a different interpreter, remove it
+   (`rm -rf ~/ollama/macos_actions/.venv`) before continuing.
+3. **AppleScripts for mail:** copy or adapt the provided examples in
+   `macos_actions/scripts/` (`Fetch_Yesterday_Emails.applescript`,
+   `Fetch_Weekend_Emails.applescript`, `Fetch_LastHour_Unread.applescript`).
+   Each script already emits JSON compatible with the gateway; adjust mailbox
+   names as needed for your environment.
 4. **Calendar via EventKit:** `macos_actions/scripts/today_events.py` is bundled
    and returns today’s occurrences as JSON; no AppleScript needed for meetings.
-5. **Identify script locations** – e.g.:
+5. **Identify/customize script locations** – for example:
 
-   - `~/Library/Scripts/LLM/unread_email_yesterday.scpt`
-   - `~/Library/Scripts/LLM/new_mail_since_hour.scpt`
-   - `~/ollama/macos_actions/scripts/today_events.py` (provided)
+   - `~/ollama/macos_actions/scripts/Fetch_Yesterday_Emails.applescript`
+   - `~/ollama/macos_actions/scripts/Fetch_Weekend_Emails.applescript`
+   - `~/ollama/macos_actions/scripts/Fetch_LastHour_Unread.applescript`
+   - `~/ollama/macos_actions/scripts/today_events.py`
 
 ---
 
@@ -43,8 +51,33 @@ meetings produce the correct “today” occurrence times.
       "${HOME}/Library/Application Support/macos_actions/actions.yml"
    ```
 
-4. Edit `actions.yml` and update each script path. For calendar meetings, keep
-   the default pointing to `scripts/today_events.py` unless you move it.
+4. Edit `actions.yml` (copied in the previous step) and update each script path
+   if you store the AppleScripts elsewhere. The example file defines the keys
+   used by the gateway:
+
+   ```yaml
+   scripts:
+     fetch_email_yesterday:
+       type: applescript
+       path: "~/ollama/macos_actions/scripts/Fetch_Yesterday_Emails.applescript"
+     fetch_weekend_emails:
+       type: applescript
+       path: "~/ollama/macos_actions/scripts/Fetch_Weekend_Emails.applescript"
+     unread_last_hour:
+       type: applescript
+       path: "~/ollama/macos_actions/scripts/Fetch_LastHour_Unread.applescript"
+     meetings_today:
+       type: shell
+       path: "~/ollama/macos_actions/scripts/today_events.py"
+
+   reports:
+     email_digest:
+       unread_key: fetch_email_yesterday
+       meetings_key: meetings_today
+       new_mail_key: unread_last_hour
+   ```
+
+   Adjust these entries if you rename scripts or want additional reports.
 
 ---
 
@@ -52,7 +85,7 @@ meetings produce the correct “today” occurrence times.
 
 ```bash
 cd ~/ollama/macos_actions
-python3 -m venv .venv
+/opt/homebrew/bin/python3.11 -m venv .venv  # use your 3.11 interpreter
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r macos_actions/requirements.txt
@@ -113,10 +146,11 @@ LaunchAgent environment instead. Keychain is recommended.)
 1. Start the API with uvicorn inside the virtualenv:
 
    ```bash
-   source ~/ollama/macos_actions/.venv/bin/activate
-   OSX_ACTIONS_KEY="$(security find-generic-password -s osx_actions_key -w)"
-   OSX_ACTIONS_CONFIG="${HOME}/Library/Application Support/macos_actions/actions.yml"
-   uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
+   cd ~/ollama/macos_actions
+   source .venv/bin/activate
+   export OSX_ACTIONS_KEY="$(security find-generic-password -s osx_actions_key -w)"
+   export OSX_ACTIONS_CONFIG="${HOME}/Library/Application Support/macos_actions/actions.yml"
+   python -m uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
    ```
 
 2. In another terminal, call the health endpoint:
@@ -129,11 +163,18 @@ LaunchAgent environment instead. Keychain is recommended.)
 
    ```bash
    API_KEY=$(security find-generic-password -s osx_actions_key -w)
-   curl -X POST http://127.0.0.1:8765/scripts/unread_email_yesterday/run \
+   curl -X POST http://127.0.0.1:8765/scripts/fetch_email_yesterday/run \
      -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d '{}'
 
-    curl -X POST http://127.0.0.1:8765/scripts/meetings_today/run \
-      -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d '{}'
+   curl -X POST http://127.0.0.1:8765/scripts/unread_last_hour/run \
+     -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d '{}'
+
+   curl -X POST http://127.0.0.1:8765/scripts/meetings_today/run \
+     -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d '{}'
+
+   # Optional weekend helper
+   curl -X POST http://127.0.0.1:8765/scripts/fetch_weekend_emails/run \
+     -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d '{}'
    ```
 
 4. Run the combined report:

@@ -18,7 +18,10 @@ context to the public internet.
 - `scripts/today_events.py`: EventKit bridge that emits today’s calendar
   occurrences as JSON (recurring events included).
 - `requirements.txt`: pinned dependency list for the dedicated virtualenv on
-  your corporate Mac (now includes `pyobjc`).
+  your corporate Mac (now includes `pyobjc`). Use Python 3.11 when creating
+  this environment—e.g. `/opt/homebrew/bin/python3.11 -m venv .venv`. PyObjC 12
+  (required for EventKit) does not yet ship wheels for newer interpreters
+  (status as of 2025-10-22).
 - `SETUP.md`: exhaustive, step-by-step instructions for installing and running
   the gateway on macOS (virtualenv, LaunchAgent, permissions, etc.).
 
