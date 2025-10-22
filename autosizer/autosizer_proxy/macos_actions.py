@@ -320,6 +320,39 @@ def _format_blockquote(text: str) -> str:
     return "\n".join(f"> {_escape_md(line) or ' '}" for line in lines)
 
 
+def _coerce_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_email_window(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    window = payload.get("window")
+    if not isinstance(window, dict):
+        return {}
+
+    start_raw = window.get("start")
+    end_raw = window.get("end")
+    hours_back_val = window.get("hours_back")
+
+    start_clean = _strip_html(start_raw)
+    end_clean = _strip_html(end_raw)
+    hours_back = _coerce_int(hours_back_val)
+
+    return {
+        "start_raw": str(start_raw) if start_raw is not None else "",
+        "end_raw": str(end_raw) if end_raw is not None else "",
+        "start": start_clean,
+        "end": end_clean,
+        "hours_back": hours_back,
+    }
+
+
 def _canonical_subject(subject: Any) -> str:
     cleaned = _strip_html(subject)
     if not cleaned:
@@ -452,13 +485,27 @@ def _prepare_email_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, An
     return prepared
 
 
-def _email_window_label(script: str) -> str:
+def _email_window_label(script: str, window_info: Optional[Dict[str, Any]] = None) -> str:
     labels = {
         "fetch_yesterday_emails": "Yesterday's Unread Emails",
         "fetch_weekend_emails": "Weekend Emails",
         "unread_last_hour": "Last Hour Unread Emails",
     }
-    return labels.get(script, "Email Digest")
+    base = labels.get(script, "Email Digest")
+    info = window_info or {}
+
+    hours_back = info.get("hours_back")
+    if isinstance(hours_back, int) and hours_back > 0:
+        return f"{base} (last {hours_back}h)"
+
+    start = (info.get("start") or "").strip()
+    end = (info.get("end") or "").strip()
+
+    if start and end:
+        return f"{base} ({start} → {end})"
+    if start:
+        return f"{base} (since {start})"
+    return base
 
 
 def _email_system_prompt() -> str:
@@ -468,16 +515,37 @@ def _email_system_prompt() -> str:
     )
 
 
-def _email_user_prompt(prepared: List[Dict[str, Any]], script: str) -> str:
-    window = _email_window_label(script)
+def _email_user_prompt(
+    prepared: List[Dict[str, Any]],
+    script: str,
+    window_info: Optional[Dict[str, Any]],
+) -> str:
+    window_label = _email_window_label(script, window_info)
     if _SELF_IDENTIFIERS:
         me_label = ", ".join(_SELF_IDENTIFIERS)
     else:
         me_label = "Not provided"
 
+    info = window_info or {}
+    start_desc = (info.get("start_raw") or info.get("start") or "").strip()
+    end_desc = (info.get("end_raw") or info.get("end") or "").strip()
+    hours_back = info.get("hours_back")
+
+    window_details: List[str] = []
+    if start_desc:
+        window_details.append(f"start: {start_desc}")
+    if end_desc:
+        window_details.append(f"end: {end_desc}")
+    if isinstance(hours_back, int) and hours_back > 0:
+        window_details.append(f"lookback_hours: {hours_back}")
+    if not window_details:
+        window_details = ["start: midnight today (local)", "end: now (local)"]
+
+    window_details_block = "\n".join(f"- {detail}" for detail in window_details)
     dataset = json.dumps(prepared, indent=2, ensure_ascii=False)
     instructions = (
-        f"Window: {window}\n"
+        f"Window: {window_label}\n"
+        f"{window_details_block}\n"
         f"My identifiers: {me_label}\n\n"
         "Instructions:\n"
         "- Group messages into threads representing the same conversation. Use canonical_subject as a hint;\n"
@@ -543,14 +611,39 @@ def _invoke_email_summary_llm(system_prompt: str, user_prompt: str, model: Optio
     return None
 
 
-def _fallback_email_summary(prepared: List[Dict[str, Any]], script: str) -> str:
-    window = _email_window_label(script)
+def _fallback_email_summary(
+    prepared: List[Dict[str, Any]],
+    script: str,
+    window_info: Optional[Dict[str, Any]],
+) -> str:
+    window = _email_window_label(script, window_info)
     grouped: Dict[str, List[Dict[str, Any]]] = {}
     for item in prepared:
         key = item.get("canonical_subject") or "(no subject)"
         grouped.setdefault(key, []).append(item)
 
-    lines = [f"### 📬 {window}", "", "_LLM summary unavailable; raw highlights below._", ""]
+    lines = [f"### 📬 {_escape_md(window)}", ""]
+
+    info = window_info or {}
+    meta_fragments: List[str] = []
+    start_display = (info.get("start") or "").strip()
+    end_display = (info.get("end") or "").strip()
+    hours_back = info.get("hours_back")
+
+    if start_display:
+        meta_fragments.append(f"Start: {_escape_md(start_display)}")
+    if end_display:
+        meta_fragments.append(f"End: {_escape_md(end_display)}")
+    if isinstance(hours_back, int) and hours_back > 0:
+        meta_fragments.append(f"Lookback: {hours_back}h")
+
+    if meta_fragments:
+        lines.append("_" + " • ".join(meta_fragments) + "_")
+        lines.append("")
+
+    lines.append("_LLM summary unavailable; raw highlights below._")
+    lines.append("")
+
     for idx, (_key, items) in enumerate(grouped.items(), start=1):
         items_sorted = sorted(items, key=lambda entry: entry.get("index", 0))
         latest = items_sorted[-1]
@@ -572,18 +665,24 @@ def _fallback_email_summary(prepared: List[Dict[str, Any]], script: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _render_email_summary(messages: List[Dict[str, Any]], script: str, model: Optional[str]) -> Optional[str]:
+def _render_email_summary(
+    messages: List[Dict[str, Any]],
+    script: str,
+    model: Optional[str],
+    payload_dict: Optional[Dict[str, Any]],
+) -> Optional[str]:
     prepared = _prepare_email_messages(messages)
+    window_info = _extract_email_window(payload_dict)
     if not prepared:
-        window = _email_window_label(script)
+        window = _email_window_label(script, window_info)
         return f"### 📬 {window}\n\n> No emails were found in this window."
 
     system_prompt = _email_system_prompt()
-    user_prompt = _email_user_prompt(prepared, script)
+    user_prompt = _email_user_prompt(prepared, script, window_info)
     summary = _invoke_email_summary_llm(system_prompt, user_prompt, model)
     if summary:
         return summary
-    return _fallback_email_summary(prepared, script)
+    return _fallback_email_summary(prepared, script, window_info)
 
 
 _SELF_IDENTIFIERS: List[str] = []
@@ -821,7 +920,7 @@ def _format_script_message(
                     status_label = " (failed)" if not ok_flag else ""
                     return f"{heading}{status_label}\n\n{error_body}"
 
-                summary_text = _render_email_summary(messages, script, model)
+                summary_text = _render_email_summary(messages, script, model, payload_dict)
                 if stderr:
                     summary_text = f"{summary_text}\n\n[stderr]\n{stderr}"
                 if not ok_flag:

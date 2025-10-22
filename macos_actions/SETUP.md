@@ -328,6 +328,10 @@ Mail/Calendar. Approve these prompts.
 - `unread_last_hour` now accepts an optional two-digit hour argument to limit the
   window (e.g., `unread_last_hour(06)` or `{"script":"unread_last_hour","payload":{"hours":"06"}}`).
   When omitted or blank it pulls unread mail from midnight to the present.
+- Responses for the unread inbox scripts now include `window.start`, `window.end`,
+  and `window.hours_back` metadata so you can confirm the range the gateway used.
+- Direct calls to `/scripts/...` continue to return raw JSON. Use the autosizer proxy
+  (e.g., Open WebUI chat with `unread_last_hour(06)`) when you want the Markdown summary.
 - If the LLM call fails, the proxy falls back to a basic per-thread outline so
   you still see raw highlights. Check the autosizer logs for
   `Email summary LLM request failed` to diagnose network or credentials issues.

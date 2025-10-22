@@ -2,6 +2,7 @@ use AppleScript version "2.8"
 use scripting additions
 
 property DEFAULT_LOOKBACK_HOURS : missing value
+property LAST_LOOKBACK_HOURS : missing value
 
 on run argv
 	return my collect_unread_last_hour(argv)
@@ -51,17 +52,30 @@ on collect_unread_last_hour(argv)
 	if fragments is not {} then set joined to fragments as text
 	set AppleScript's text item delimiters to ""
 	
-	return "{\"messages\":[" & joined & "]}"
+	set windowStartText to my json_string(my format_local_timestamp(startWindow))
+	set windowEndText to my json_string(my format_local_timestamp(nowDate))
+	
+	set windowEntries to {"\"start\":" & windowStartText, "\"end\":" & windowEndText}
+	if my LAST_LOOKBACK_HOURS is not missing value then
+		set end of windowEntries to "\"hours_back\":" & (LAST_LOOKBACK_HOURS as string)
+	end if
+	set windowJSON to "{" & my join_entries(windowEntries) & "}"
+	
+	set messagesJSON to "[" & joined & "]"
+	return "{\"window\":" & windowJSON & ",\"messages\":" & messagesJSON & "}"
 end collect_unread_last_hour
 
 on resolve_start_window(nowDate, argv)
+	set my LAST_LOOKBACK_HOURS to DEFAULT_LOOKBACK_HOURS
 	set midnightAnchor to my start_of_day(nowDate)
 	set hoursBack to my parse_hours_argument(argv)
 	if hoursBack is missing value then return midnightAnchor
 	
 	try
+		set my LAST_LOOKBACK_HOURS to hoursBack
 		return nowDate - (hoursBack * hours)
 	on error
+		set my LAST_LOOKBACK_HOURS to DEFAULT_LOOKBACK_HOURS
 		return midnightAnchor
 	end try
 end resolve_start_window
@@ -92,6 +106,25 @@ on parse_hours_argument(argv)
 	if hoursBack ≤ 0 then return DEFAULT_LOOKBACK_HOURS
 	return hoursBack
 end parse_hours_argument
+
+on format_local_timestamp(dt)
+	set datePart to date string of dt
+	set timePart to time string of dt
+	return datePart & " " & timePart
+end format_local_timestamp
+
+on join_entries(entries)
+	if entries is missing value then return ""
+	if entries is {} then return ""
+	set AppleScript's text item delimiters to ","
+	set combined to entries as text
+	set AppleScript's text item delimiters to ""
+	return combined
+end join_entries
+
+on json_string(candidate)
+	return "\"" & my safe_text(candidate) & "\""
+end json_string
 
 on trim_whitespace(candidate)
 	if candidate is missing value then return ""
