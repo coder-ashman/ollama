@@ -296,6 +296,9 @@ Mail/Calendar. Approve these prompts.
    environment:
      OSX_ACTIONS_BASE: "http://host.lima.internal:8765"
      OSX_ACTIONS_KEY: "<same key stored in Keychain>"
+     # Optional: identify yourself for the summary checkmark column
+     OSX_ACTIONS_SELF: "alex.barrett"
+     OSX_ACTIONS_SELF_ALIASES: "alex.barrett@company.com, alex"
    extra_hosts:
      - "host.lima.internal:host-gateway"
    ```

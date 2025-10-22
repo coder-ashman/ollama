@@ -293,19 +293,59 @@ def _format_blockquote(text: str) -> str:
     return "\n".join(f"> {_escape_md(line) or ' '}" for line in lines)
 
 
+_SELF_IDENTIFIERS: List[str] = []
+for chunk in (OSX_ACTIONS_SELF, OSX_ACTIONS_SELF_ALIASES):
+    if not chunk:
+        continue
+    for token in re.split(r"[,\n;]+", chunk):
+        cleaned = token.strip().lower()
+        if cleaned:
+            _SELF_IDENTIFIERS.append(cleaned)
+
+
+def _event_should_skip(event: Dict[str, Any]) -> bool:
+    title = _strip_html(event.get("title") or "").lower()
+    start_dt = _parse_iso(event.get("start"))
+    if (
+        start_dt
+        and start_dt.strftime("%H:%M") == "08:30"
+        and title == "20/20 flight plan morning meeting"
+    ):
+        return True
+    return False
+
+
+def _is_me_required(event: Dict[str, Any]) -> bool:
+    if not _SELF_IDENTIFIERS:
+        return False
+    attendees = event.get("required_attendees_full") or event.get("required_attendees") or []
+    normalized = [_strip_html(attendee).lower() for attendee in attendees if attendee]
+    for ident in _SELF_IDENTIFIERS:
+        for attendee in normalized:
+            if not attendee:
+                continue
+            if ident == attendee or ident in attendee or attendee in ident:
+                return True
+    return False
+
+
 def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
-    if not events:
+    filtered_events = [
+        event for event in events if not _event_should_skip(event)
+    ]
+
+    if not filtered_events:
         return (
             "### 📅 Meetings Today\n\n"
             "> No meetings scheduled for today. Enjoy the breathing room!"
         )
 
-    first_with_start = next((ev for ev in events if ev.get("start")), None)
+    first_with_start = next((ev for ev in filtered_events if ev.get("start")), None)
     dt = _parse_iso(first_with_start.get("start")) if first_with_start else None
     heading = f"Meetings for {dt.strftime('%A, %B %d').replace(' 0', ' ')}" if dt else "Today's Meetings"
 
-    total = len(events)
-    earliest = _parse_iso(events[0].get("start"))
+    total = len(filtered_events)
+    earliest = _parse_iso(filtered_events[0].get("start"))
     start_label = _format_clock(earliest) if earliest else "—"
 
     generated = datetime.now(timezone.utc).astimezone()
@@ -313,34 +353,57 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
     generated_date = _format_date(generated)
 
     rows: List[str] = []
-    for event in events:
-        ordinal = int(event.get("ordinal") or len(rows) + 1)
-        time_range = _escape_md(_format_time_range(event.get("start"), event.get("end")))
+    divider_row = "| --- | --- | --- | --- | --- | --- | --- |"
+
+    for idx, event in enumerate(filtered_events, start=1):
+        if rows:
+            rows.append(divider_row)
+
+        ordinal = int(event.get("ordinal") or idx)
+        start_dt = _parse_iso(event.get("start"))
+        end_dt = _parse_iso(event.get("end"))
+
+        if start_dt and end_dt:
+            if start_dt.date() == end_dt.date():
+                time_span = f"{_format_clock(start_dt)} – {_format_clock(end_dt)}"
+            else:
+                time_span = f"{_format_clock(start_dt)} → {_format_clock(end_dt)}"
+        elif start_dt:
+            time_span = _format_clock(start_dt)
+        elif end_dt:
+            time_span = _format_clock(end_dt)
+        else:
+            time_span = "—"
+
+        date_value = start_dt.strftime("%a, %b %d").replace(" 0", " ") if start_dt else "—"
+
         title = _escape_md(_strip_html(event.get("title") or "Untitled Meeting"))
         raw_summary = _strip_html(event.get("summary") or "")
         summary_block = f" — _{_escape_md(raw_summary)}_" if raw_summary else ""
         organizer = _escape_md(_strip_html(event.get("organizer") or "—"))
 
-        required_trimmed = event.get("required_attendees") or []
-        required_full = event.get("required_attendees_full") or required_trimmed
-        overflow = max(len(required_full) - len(required_trimmed), 0)
-        required_text = _format_people(required_trimmed)
-        if overflow:
-            required_text = f"{required_text} +{overflow} more"
-
         optional_count = len(event.get("optional_attendees_full") or [])
         optional_fragment = f" _(optional attendees: {optional_count})_" if optional_count else ""
         command_hint = f"`meetings_today_detail({ordinal})`"
 
-        session_cell = f"**{title}**{summary_block}{optional_fragment}"
+        session_cell = f"🟦 **{title}**{summary_block}{optional_fragment}"
+        me_required = "✅" if _is_me_required(event) else ""
 
         rows.append(
-            f"| 🔹 **{ordinal:02d}** | **{time_range}** | 🔷 {session_cell} | {organizer} | {required_text} | {command_hint} |"
+            "| {row} | {date} | {time} | {session} | {organizer} | {me} | {detail} |".format(
+                row=f"🟦 **{ordinal:02d}**",
+                date=f"🟦 **{_escape_md(date_value)}**",
+                time=f"🟦 **{_escape_md(time_span)}**",
+                session=session_cell,
+                organizer=organizer,
+                me=me_required,
+                detail=command_hint,
+            )
         )
 
     table_header = (
-        "| # | Time | Session | Organizer | Required | Detail |\n"
-        "|---|------|---------|-----------|----------|--------|\n"
+        "| Row | Date | Time | Session | Organizer | Me? | Detail |\n"
+        "|---|---|---|---|---|---|---|\n"
     )
     table_rows = "\n".join(rows)
 
@@ -375,6 +438,7 @@ def _render_meeting_detail(event: Dict[str, Any]) -> str:
         f"- **Calendar:** {calendar}",
         f"- **Location:** {location or '_Not set_'}",
         f"- **All-day:** {'Yes' if is_all_day else 'No'}",
+        f"- **I'm required:** {'Yes' if _is_me_required(event) else 'No'}",
     ]
 
     required_full = event.get("required_attendees_full") or []

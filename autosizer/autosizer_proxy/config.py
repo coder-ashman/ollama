@@ -11,6 +11,8 @@ READ_TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "300"))  # seconds
 OSX_ACTIONS_BASE = os.environ.get("OSX_ACTIONS_BASE", "").rstrip("/")
 OSX_ACTIONS_KEY = os.environ.get("OSX_ACTIONS_KEY", "")
 OSX_ACTIONS_TIMEOUT = float(os.environ.get("OSX_ACTIONS_TIMEOUT", "30"))
+OSX_ACTIONS_SELF = os.environ.get("OSX_ACTIONS_SELF", "")
+OSX_ACTIONS_SELF_ALIASES = os.environ.get("OSX_ACTIONS_SELF_ALIASES", "")
 
 SHORT_MAX = int(os.environ.get("SHORT_MAX_WORDS", "12"))
 NORMAL_MAX = int(os.environ.get("NORMAL_MAX_WORDS", "60"))
@@ -48,6 +50,8 @@ __all__ = [
     "OSX_ACTIONS_BASE",
     "OSX_ACTIONS_KEY",
     "OSX_ACTIONS_TIMEOUT",
+    "OSX_ACTIONS_SELF",
+    "OSX_ACTIONS_SELF_ALIASES",
     "SHORT_MAX",
     "NORMAL_MAX",
     "CAP_SHORT",
