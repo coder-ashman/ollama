@@ -7,7 +7,25 @@ meetings produce the correct “today” occurrence times.
 
 ---
 
-## 1. Prerequisites
+## 1. Automated setup (recommended)
+
+Run the bootstrap script to build the virtualenv, install dependencies, copy the
+example configuration, create the Keychain secret (if missing), and optionally
+run the calendar authorization helper:
+
+```bash
+cd ~/ollama/macos_actions
+./scripts/setup.sh
+```
+
+The script can be re-run at any time; it will recreate the virtualenv and leave
+an existing `actions.yml` untouched. After the script finishes, follow the
+launch instructions it prints to start uvicorn. The remaining sections document
+the same steps manually in case you prefer to perform them yourself.
+
+---
+
+## 2. Prerequisites
 
 1. **macOS account:** use the user account that will run the automations (admin
    not required).
@@ -33,7 +51,7 @@ meetings produce the correct “today” occurrence times.
 
 ---
 
-## 2. Copy the service files
+## 3. Copy the service files
 
 1. On your workstation, copy the `macos_actions/` directory from this repo to
    the target Mac. Recommended destination: `~/ollama/macos_actions`.
@@ -81,7 +99,7 @@ meetings produce the correct “today” occurrence times.
 
 ---
 
-## 3. Prepare the dedicated virtual environment
+## 4. Prepare the dedicated virtual environment
 
 ```bash
 cd ~/ollama/macos_actions
@@ -104,7 +122,7 @@ Keep the virtualenv for the LaunchAgent step.
 
 ---
 
-## 4. Authorize calendar access (EventKit)
+## 5. Authorize calendar access (EventKit)
 
 > Do these steps in **Terminal.app** (not VS Code’s integrated terminal) so the
 > macOS permission dialog appears and the decision is stored for the correct
@@ -126,7 +144,7 @@ You can re-run the script at any time to confirm permission sticks.
 
 ---
 
-## 5. Secure the API key
+## 6. Secure the API key
 
 Pick a long random string and store it in the macOS Keychain:
 
@@ -141,7 +159,7 @@ LaunchAgent environment instead. Keychain is recommended.)
 
 ---
 
-## 6. Test the service manually
+## 7. Test the service manually
 
 1. Start the API with uvicorn inside the virtualenv:
 
@@ -191,7 +209,7 @@ Stop uvicorn once satisfied (Ctrl+C).
 
 ---
 
-## 7. Install the LaunchAgent
+## 8. Install the LaunchAgent
 
 1. Create a wrapper script that loads the API key from Keychain and launches
    uvicorn. Save as `~/ollama/macos_actions/bin/start-gateway.sh`:
@@ -248,7 +266,7 @@ Mail/Calendar. Approve these prompts.
 
 ---
 
-## 8. Connect autosizer (or MCP clients)
+## 9. Connect autosizer (or MCP clients)
 
 1. Inside your Rancher `docker-compose.yml`, add the gateway coordinates and API
    key to the autosizer service:
@@ -269,7 +287,7 @@ Mail/Calendar. Approve these prompts.
 
 ---
 
-## 9. Scheduling checks (optional)
+## 10. Scheduling checks (optional)
 
 To automate daily digests or hourly new-mail pings, create additional
 LaunchAgents that `curl` the `/reports/email-digest` endpoint and post the
@@ -296,7 +314,7 @@ file that the LLM ingests).
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 - **`invalid api key`** – confirm the LaunchAgent exports the same key autosizer
   uses. Re-run the Keychain command to verify.
