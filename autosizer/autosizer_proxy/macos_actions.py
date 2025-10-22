@@ -302,8 +302,8 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
         ordinal = int(event.get("ordinal") or len(rows) + 1)
         time_range = _escape_md(_format_time_range(event.get("start"), event.get("end")))
         title = _escape_md(event.get("title") or "Untitled Meeting")
-        summary = event.get("summary") or ""
-        summary_block = f" — _{_escape_md(summary)}_" if summary else ""
+        summary = _escape_md(event.get("summary") or "")
+        summary_block = f"<br/><span style='color:#6b7280;'>{summary}</span>" if summary else ""
         organizer = _escape_md(event.get("organizer") or "—")
 
         required_trimmed = event.get("required_attendees") or []
@@ -314,7 +314,7 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
             required_text = f"{required_text} +{overflow} more"
 
         optional_count = len(event.get("optional_attendees_full") or [])
-        optional_fragment = f" _(optional attendees: {optional_count})_" if optional_count else ""
+        optional_fragment = f"<br/><span style='color:#94a3b8;'>Optional: {optional_count}</span>" if optional_count else ""
         command_hint = f"`meetings_today_detail({ordinal})`"
 
         session_cell = f"**{title}**{summary_block}{optional_fragment}"
