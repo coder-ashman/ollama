@@ -10,7 +10,7 @@ OLLAMA = os.environ.get("TARGET_OLLAMA", "http://ollama:11434")
 READ_TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "300"))  # seconds
 OSX_ACTIONS_BASE = os.environ.get("OSX_ACTIONS_BASE", "").rstrip("/")
 OSX_ACTIONS_KEY = os.environ.get("OSX_ACTIONS_KEY", "")
-OSX_ACTIONS_TIMEOUT = float(os.environ.get("OSX_ACTIONS_TIMEOUT", "30"))
+OSX_ACTIONS_TIMEOUT = float(os.environ.get("OSX_ACTIONS_TIMEOUT", "90"))
 OSX_ACTIONS_SELF = os.environ.get("OSX_ACTIONS_SELF", "")
 OSX_ACTIONS_SELF_ALIASES = os.environ.get("OSX_ACTIONS_SELF_ALIASES", "")
 

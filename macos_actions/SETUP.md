@@ -328,6 +328,9 @@ Mail/Calendar. Approve these prompts.
 - If the LLM call fails, the proxy falls back to a basic per-thread outline so
   you still see raw highlights. Check the autosizer logs for
   `Email summary LLM request failed` to diagnose network or credentials issues.
+- The gateway scripts can take a minute to finish when Mail has a large batch.
+  Increase `OSX_ACTIONS_TIMEOUT` (seconds) in the autosizer environment block if
+  you still encounter HTTP read timeouts.
 
 ---
 
