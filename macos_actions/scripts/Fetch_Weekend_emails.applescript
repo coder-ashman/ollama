@@ -19,7 +19,7 @@ on collect_weekend_messages()
 	
 	tell application "Mail"
 		set targetMailbox to mailbox "My Inbox" of account "Exchange"
-		set messageList to (every message of targetMailbox whose (date received >= startWindow) and (date received <= endWindow))
+		set messageList to (every message of targetMailbox whose (date received is greater than or equal to startWindow) and (date received is less than or equal to endWindow))
 		repeat with eachMessage in messageList
 			set end of fragments to my message_fragment(eachMessage, targetMailbox)
 		end repeat
@@ -39,7 +39,7 @@ on message_fragment(msg, mb)
 		set senderText to my safe_text(sender of msg)
 		set idText to my safe_text(message id of msg)
 		set readFlag to read status of msg
-		set dateText to my iso8601(date received of msg)
+		set dateText to my safe_text(date received of msg as string)
 		set mailboxText to my safe_text(name of mb as text)
 		set snippetText to my snippet_from_content(msg)
 	end using terms from
@@ -110,6 +110,7 @@ on trim_whitespace(t)
 			set charList to rest of charList
 		end if
 		if charList is {} then return ""
+	end repeat
 	repeat while (charList is not {}) and my is_whitespace(item -1 of charList)
 		if (count of charList) = 1 then
 			set charList to {}
@@ -117,6 +118,7 @@ on trim_whitespace(t)
 			set charList to items 1 thru -2 of charList
 		end if
 		if charList is {} then return ""
+	end repeat
 	return charList as text
 end trim_whitespace
 
@@ -127,27 +129,3 @@ on is_whitespace(ch)
 	if ch is linefeed then return true
 	return false
 end is_whitespace
-
-on iso8601(d)
-	set yyyy to year of d as integer
-	set mm to month of d as integer
-	set dd to day of d as integer
-	set hh to hours of d as integer
-	set mi to minutes of d as integer
-	set ss to seconds of d as integer
-	set offsetSeconds to (time to GMT) of d * -1
-	set sign to "+"
-	if offsetSeconds < 0 then
-		set sign to "-"
-		set offsetSeconds to offsetSeconds * -1
-	end if
-	set offsetHours to offsetSeconds div hours
-	set offsetMinutes to (offsetSeconds mod hours) div minutes
-	return (yyyy as string) & "-" & my pad2(mm) & "-" & my pad2(dd) & "T" & my pad2(hh) & ":" & my pad2(mi) & ":" & my pad2(ss) & sign & my pad2(offsetHours) & ":" & my pad2(offsetMinutes)
-end iso8601
-
-on pad2(n)
-	set nInt to n as integer
-	if nInt < 10 then return "0" & nInt
-	return nInt as string
-end pad2
