@@ -105,6 +105,7 @@ the same steps manually in case you prefer to perform them yourself.
 cd ~/ollama/macos_actions
 /opt/homebrew/bin/python3.11 -m venv .venv  # use your 3.11 interpreter
 source .venv/bin/activate
+cd ..
 pip install --upgrade pip
 pip install -r macos_actions/requirements.txt
 ```

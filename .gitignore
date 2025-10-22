@@ -7,3 +7,4 @@ autosizer/__pycache__/
 macos_actions/.venv/
 *.lock
 *.log
+macos_actions/scripts/test

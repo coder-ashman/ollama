@@ -2,10 +2,10 @@
 # and update the script paths to match your environment.
 
 scripts:
-  fetch_email_yesterday:
+  fetch_yesterday_emails:
     type: applescript
     path: "~/ollama/macos_actions/scripts/Fetch_Yesterday_Emails.applescript"
-    timeout: 120
+    timeout: 120  
   fetch_weekend_emails:
     type: applescript
     path: "~/ollama/macos_actions/scripts/Fetch_Weekend_Emails.applescript"
@@ -21,6 +21,6 @@ scripts:
 
 reports:
   email_digest:
-    unread_key: fetch_email_yesterday
+    unread_key: fetch_yesterday_emails
     meetings_key: meetings_today
     new_mail_key: unread_last_hour
