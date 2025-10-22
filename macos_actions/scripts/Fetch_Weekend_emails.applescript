@@ -16,14 +16,27 @@ on collect_weekend_messages()
 	set endWindow to cursorDate + 3 * days - 1
 	
 	tell application "Mail"
-		set targetMailbox to mailbox "My Inbox" of account "Exchange"
-		set messageList to (every message of targetMailbox whose (date received is greater than or equal to startWindow) and (date received is less than or equal to endWindow))
+		set exchangeAccount to account "Exchange"
+		set foldersToScan to {mailbox "Rajesh Jayaraj" of exchangeAccount, ¬
+			mailbox "Cassie Pizzurro" of exchangeAccount, ¬
+			mailbox "My Inbox" of exchangeAccount}
+		set allMessages to {}
+		set allMeta to {}
+		repeat with mb in foldersToScan
+			set messageList to (every message of mb whose (date received is greater than or equal to startWindow) and (date received is less than or equal to endWindow))
+			set end of allMessages to messageList
+			set end of allMeta to name of mb as text
+		end repeat
 	end tell
 	
 	set fragments to {}
-	set orderedMessages to my sort_messages(messageList)
-	repeat with eachMessage in orderedMessages
-		set end of fragments to my message_fragment(eachMessage, targetMailbox)
+	repeat with idx from 1 to count of allMessages
+		set mailboxMessages to item idx of allMessages
+		set mailboxName to item idx of allMeta
+		set orderedMessages to my sort_messages(mailboxMessages)
+		repeat with eachMessage in orderedMessages
+			set end of fragments to my message_fragment(eachMessage, mailboxName)
+		end repeat
 	end repeat
 	
 	set AppleScript's text item delimiters to ","
@@ -34,16 +47,16 @@ on collect_weekend_messages()
 	return "{\"messages\":[" & joined & "]}"
 end collect_weekend_messages
 
-on message_fragment(msg, mb)
+on message_fragment(msg, mailboxName)
 	using terms from application "Mail"
 		set subjectText to my safe_text(subject of msg)
 		set senderText to my safe_text(sender of msg)
 		set idText to my safe_text(message id of msg)
 		set readFlag to read status of msg
 		set dateText to my safe_text(date received of msg as string)
-		set mailboxText to my safe_text(name of mb as text)
 		set bodyText to my safe_text(content of msg as text)
 	end using terms from
+	set mailboxText to my safe_text(mailboxName)
 	
 	set fragment to "{"
 	set fragment to fragment & "\"subject\":\"" & subjectText & "\""
