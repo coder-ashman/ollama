@@ -234,6 +234,19 @@ def _format_time_range(start_iso: Optional[str], end_iso: Optional[str]) -> str:
     return f"{dt.strftime('%b %d, %Y').replace(' 0', ' ')}, {_format_clock(dt)}"
 
 
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _strip_html(value: Any) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    text = _HTML_TAG_RE.sub(" ", text)
+    text = _WHITESPACE_RE.sub(" ", text)
+    return text.strip()
+
+
 def _escape_md(value: Any) -> str:
     text = str(value or "")
     for needle, repl in (
@@ -259,15 +272,17 @@ def _escape_md(value: Any) -> str:
 
 
 def _format_people(values: List[str], *, empty: str = "_None_") -> str:
-    if not values:
+    cleaned = [_strip_html(val) for val in values if _strip_html(val)]
+    if not cleaned:
         return empty
-    return ", ".join(f"`{_escape_md(person)}`" for person in values)
+    return ", ".join(f"`{_escape_md(person)}`" for person in cleaned)
 
 
 def _format_people_list(values: List[str]) -> str:
-    if not values:
+    cleaned = [_strip_html(val) for val in values if _strip_html(val)]
+    if not cleaned:
         return "- None"
-    return "\n".join(f"- {_escape_md(person)}" for person in values)
+    return "\n".join(f"- {_escape_md(person)}" for person in cleaned)
 
 
 def _format_blockquote(text: str) -> str:
@@ -301,10 +316,10 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
     for event in events:
         ordinal = int(event.get("ordinal") or len(rows) + 1)
         time_range = _escape_md(_format_time_range(event.get("start"), event.get("end")))
-        title = _escape_md(event.get("title") or "Untitled Meeting")
-        raw_summary = event.get("summary") or ""
+        title = _escape_md(_strip_html(event.get("title") or "Untitled Meeting"))
+        raw_summary = _strip_html(event.get("summary") or "")
         summary_block = f" — _{_escape_md(raw_summary)}_" if raw_summary else ""
-        organizer = _escape_md(event.get("organizer") or "—")
+        organizer = _escape_md(_strip_html(event.get("organizer") or "—"))
 
         required_trimmed = event.get("required_attendees") or []
         required_full = event.get("required_attendees_full") or required_trimmed
@@ -327,7 +342,8 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
         "| # | Time | Session | Organizer | Required | Detail |\n"
         "|---|------|---------|-----------|----------|--------|\n"
     )
-    table_rows = "\n".join(rows)
+    separator = "\n|---|------|---------|-----------|----------|--------|\n"
+    table_rows = separator.join(rows)
 
     intro = (
         f"### 📅 {heading}\n"
@@ -344,11 +360,11 @@ def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
 
 def _render_meeting_detail(event: Dict[str, Any]) -> str:
     ordinal = event.get("ordinal")
-    title = _escape_md(event.get("title") or "Untitled Meeting")
+    title = _escape_md(_strip_html(event.get("title") or "Untitled Meeting"))
     time_range = _escape_md(_format_time_range(event.get("start"), event.get("end")))
-    organizer = _escape_md(event.get("organizer") or "—")
-    calendar = _escape_md(event.get("calendar") or "—")
-    location = _escape_md(event.get("location") or "—")
+    organizer = _escape_md(_strip_html(event.get("organizer") or "—"))
+    calendar = _escape_md(_strip_html(event.get("calendar") or "—"))
+    location = _escape_md(_strip_html(event.get("location") or "—"))
     is_all_day = bool(event.get("is_all_day"))
     url = event.get("url")
 
@@ -374,7 +390,7 @@ def _render_meeting_detail(event: Dict[str, Any]) -> str:
         ]
     )
 
-    notes = event.get("notes") or ""
+    notes = _strip_html(event.get("notes") or "")
     notes_section = ""
     if notes.strip():
         notes_section = "\n**Notes**\n" + _format_blockquote(notes)
