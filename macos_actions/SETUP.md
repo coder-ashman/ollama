@@ -87,6 +87,9 @@ the same steps manually in case you prefer to perform them yourself.
      meetings_today:
        type: shell
        path: "~/ollama/macos_actions/scripts/today_events.py"
+     meetings_today_detail:
+       type: shell
+       path: "~/ollama/macos_actions/scripts/today_events.py"
 
    reports:
      email_digest:
@@ -189,6 +192,11 @@ LaunchAgent environment instead. Keychain is recommended.)
 
    curl -X POST http://127.0.0.1:8765/scripts/meetings_today/run \
      -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" -d '{}'
+
+   # Fetch detail (index 1 shown; adjust as needed)
+   curl -X POST http://127.0.0.1:8765/scripts/meetings_today_detail/run \
+     -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+     -d '{"index": 1}'
 
    # Optional weekend helper
    curl -X POST http://127.0.0.1:8765/scripts/fetch_weekend_emails/run \
@@ -296,7 +304,10 @@ Mail/Calendar. Approve these prompts.
 
 3. Invoke the new endpoints from Open WebUI / MCP by calling
    `POST http://autosizer:8089/tool/osx/run` with a JSON body such as
-   `{"script":"fetch_yesterday_emails"}` (add a `payload` object if the script expects parameters). You can also hit the Gateway directly if you do not need the relay.
+   `{"script":"fetch_yesterday_emails"}`. Provide `payload` when parameters are
+   needed—for example `{"script":"meetings_today_detail","payload":{"index":1}}`
+   fetches the expanded view for meeting #1. You can also hit the Gateway
+   directly if you do not need the relay.
 
 ---
 

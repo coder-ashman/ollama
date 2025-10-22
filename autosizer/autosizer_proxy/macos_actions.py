@@ -15,11 +15,12 @@ _ENDPOINTS = {
     "fetch_yesterday_emails": "/scripts/fetch_yesterday_emails/run",
     "unread_last_hour": "/scripts/unread_last_hour/run",
     "meetings_today": "/scripts/meetings_today/run",
+    "meetings_today_detail": "/scripts/meetings_today_detail/run",
     "fetch_weekend_emails": "/scripts/fetch_weekend_emails/run",
     "email_digest": "/reports/email-digest",
 }
 
-_SIMPLE_CALL_RE = re.compile(r"^\s*(?P<name>[A-Za-z_][\w-]*)\s*\(\s*\)\s*$")
+_SIMPLE_CALL_RE = re.compile(r"^\s*(?P<name>[A-Za-z_][\w-]*)\s*\(\s*(?P<args>.*)\s*\)\s*$")
 _CALL_SCRIPT_RE = re.compile(
     r'^\s*call_script\s*\(\s*(?P<quote>["\'])(?P<name>[\w-]+)(?P=quote)\s*(?:,\s*(?P<payload>\{.*\}))?\s*\)\s*$',
     re.DOTALL,
@@ -144,7 +145,30 @@ def _parse_script_command(content: str) -> Optional[Tuple[str, Dict[str, Any]]]:
 
     simple = _SIMPLE_CALL_RE.match(text)
     if simple:
-        return (simple.group("name"), {})
+        name = simple.group("name")
+        args = (simple.group("args") or "").strip()
+        if not args:
+            return (name, {})
+
+        if args.startswith("{") and args.endswith("}"):
+            payload = _parse_payload(args)
+            if payload is None:
+                return None
+            return (name, payload)
+
+        if re.fullmatch(r"\d+", args):
+            return (name, {"index": int(args)})
+
+        try:
+            value = ast.literal_eval(args)
+        except Exception:
+            value = args.strip("'\"")
+
+        if isinstance(value, dict):
+            return (name, value)
+        if isinstance(value, (int, float, str)):
+            return (name, {"value": value})
+        return (name, {"value": str(value)})
 
     return None
 
@@ -185,22 +209,6 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _format_time_range(start_iso: Optional[str], end_iso: Optional[str]) -> str:
-    start_dt = _parse_iso(start_iso)
-    end_dt = _parse_iso(end_iso)
-    if not start_dt and not end_dt:
-        return "—"
-    if start_dt and end_dt:
-        if start_dt.date() == end_dt.date():
-            date_label = start_dt.strftime('%b %d').replace(' 0', ' ')
-            return f"{date_label}, {_format_clock(start_dt)} – {_format_clock(end_dt)}"
-        start_label = f"{start_dt.strftime('%b %d, %Y').replace(' 0', ' ')}, {_format_clock(start_dt)}"
-        end_label = f"{end_dt.strftime('%b %d, %Y').replace(' 0', ' ')}, {_format_clock(end_dt)}"
-        return f"{start_label} → {end_label}"
-    dt = start_dt or end_dt
-    return f"{dt.strftime('%b %d, %Y').replace(' 0', ' ')}, {_format_clock(dt)}"
-
-
 def _format_clock(dt: datetime) -> str:
     formatted = dt.strftime("%I:%M %p")
     return formatted[1:] if formatted.startswith("0") else formatted
@@ -210,153 +218,172 @@ def _format_date(dt: datetime) -> str:
     return dt.strftime("%b %d, %Y").replace(" 0", " ")
 
 
-def _badge_list(values: List[str], variant: str) -> str:
+def _format_time_range(start_iso: Optional[str], end_iso: Optional[str]) -> str:
+    start_dt = _parse_iso(start_iso)
+    end_dt = _parse_iso(end_iso)
+    if not start_dt and not end_dt:
+        return "—"
+    if start_dt and end_dt:
+        if start_dt.date() == end_dt.date():
+            date_label = start_dt.strftime("%b %d").replace(" 0", " ")
+            return f"{date_label}, {_format_clock(start_dt)} – {_format_clock(end_dt)}"
+        start_label = f"{start_dt.strftime('%b %d, %Y').replace(' 0', ' ')}, {_format_clock(start_dt)}"
+        end_label = f"{end_dt.strftime('%b %d, %Y').replace(' 0', ' ')}, {_format_clock(end_dt)}"
+        return f"{start_label} → {end_label}"
+    dt = start_dt or end_dt
+    return f"{dt.strftime('%b %d, %Y').replace(' 0', ' ')}, {_format_clock(dt)}"
+
+
+def _escape_md(value: Any) -> str:
+    text = str(value or "")
+    for needle, repl in (
+        ("\\", "\\\\"),
+        ("`", "\\`"),
+        ("*", "\\*"),
+        ("_", "\\_"),
+        ("{", "\\{"),
+        ("}", "\\}"),
+        ("[", "\\["),
+        ("]", "\\]"),
+        ("(", "\\("),
+        (")", "\\)"),
+        ("#", "\\#"),
+        ("+", "\\+"),
+        ("-", "\\-"),
+        (".", "\\."),
+        ("!", "\\!"),
+        ("|", "\\|"),
+    ):
+        text = text.replace(needle, repl)
+    return text
+
+
+def _format_people(values: List[str], *, empty: str = "_None_") -> str:
     if not values:
-        return '<span class="text-muted">None</span>'
-    badges = "".join(f'<span class="badge bg-{variant} me-1 mb-1">{_escape_html(v)}</span>' for v in values)
-    return badges
+        return empty
+    return ", ".join(f"`{_escape_md(person)}`" for person in values)
 
 
-def _escape_html(value: Any) -> str:
-    return (
-        str(value)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&#x27;")
-    )
+def _format_people_list(values: List[str]) -> str:
+    if not values:
+        return "- None"
+    return "\n".join(f"- {_escape_md(person)}" for person in values)
 
 
-def _render_meetings_table(events: List[Dict[str, Any]]) -> str:
+def _format_blockquote(text: str) -> str:
+    cleaned = text.strip()
+    if not cleaned:
+        return ""
+    lines = [line.rstrip() for line in cleaned.splitlines()]
+    return "\n".join(f"> {_escape_md(line) or ' '}" for line in lines)
+
+
+def _render_meetings_summary(events: List[Dict[str, Any]]) -> str:
     if not events:
-        return """
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-<style>
-  .agenda-shell{max-width:900px;margin:32px auto;font-family:"Inter","SF Pro Display",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
-  .agenda-empty{border-radius:20px;border:1px solid rgba(255,255,255,0.08);background:linear-gradient(135deg,#1d2331,#111521);padding:32px;text-align:center;box-shadow:0 24px 48px rgba(8,15,45,0.45);color:#e2e8f0;}
-  .agenda-empty h5{font-weight:600;margin-bottom:12px;}
-  .agenda-empty p{color:#94a3b8;margin:0;font-size:0.95rem;}
-</style>
-<div class="agenda-shell">
-  <div class="agenda-empty">
-    <h5>No meetings scheduled for today 🎉</h5>
-    <p>Enjoy the breathing room—nothing else is booked on the calendar.</p>
-  </div>
-</div>
-""".strip()
+        return (
+            "### 📅 Meetings Today\n\n"
+            "> No meetings scheduled for today. Enjoy the breathing room!"
+        )
 
-    def agenda_heading(events: List[Dict[str, Any]]) -> str:
-        first = next((ev for ev in events if ev.get("start")), None)
-        dt = _parse_iso(first.get("start")) if first else None
-        if not dt:
-            return "Today's Meetings"
-        return f"Meetings for {dt.strftime('%A, %B %d').replace(' 0', ' ')}"
+    first_with_start = next((ev for ev in events if ev.get("start")), None)
+    dt = _parse_iso(first_with_start.get("start")) if first_with_start else None
+    heading = f"Meetings for {dt.strftime('%A, %B %d').replace(' 0', ' ')}" if dt else "Today's Meetings"
 
-    heading = agenda_heading(events)
     total = len(events)
     earliest = _parse_iso(events[0].get("start"))
     start_label = _format_clock(earliest) if earliest else "—"
-
-    rows = []
-    for idx, event in enumerate(events, start=1):
-        title = _escape_html(event.get("title") or "Untitled Meeting")
-        organizer = _escape_html(event.get("organizer") or "—")
-        summary = _escape_html(event.get("summary") or "")
-        time_range = _format_time_range(event.get("start"), event.get("end"))
-        required_html = _badge_list(event.get("required_attendees") or [], "primary")
-        optional_html = _badge_list(event.get("optional_attendees") or [], "secondary")
-
-        summary_block = f'<div class="agenda-summary">{summary}</div>' if summary else ""
-
-        rows.append(
-            f"""
-        <tr>
-          <td class="align-middle text-muted small" data-label="#">#{idx:02d}</td>
-          <td class="align-middle agenda-time fw-semibold" data-label="Time">{time_range}</td>
-          <td class="align-middle" data-label="Session">
-            <div class="agenda-title">{title}</div>
-            {summary_block}
-          </td>
-          <td class="align-middle agenda-owner" data-label="Organizer">{organizer}</td>
-          <td class="align-middle" data-label="Required">{required_html}</td>
-          <td class="align-middle" data-label="Optional">{optional_html}</td>
-        </tr>
-        """.strip()
-        )
 
     generated = datetime.now(timezone.utc).astimezone()
     generated_label = _format_clock(generated)
     generated_date = _format_date(generated)
 
-    table_html = "\n".join(rows)
-    return f"""
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-<style>
-  .agenda-shell{{max-width:1000px;margin:32px auto;font-family:"Inter","SF Pro Display",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e2e8f0;}}
-  .agenda-card{{border-radius:24px;background:radial-gradient(circle at 20% 20%,rgba(122,162,255,0.16),transparent 55%),linear-gradient(140deg,#111827,#0b101d);border:1px solid rgba(148,163,184,0.18);box-shadow:0 30px 60px rgba(7,11,30,0.45);overflow:hidden;}}
-  .agenda-header{{padding:24px 28px 20px;border-bottom:1px solid rgba(148,163,184,0.18);}}
-  .agenda-title{{font-size:1.1rem;font-weight:600;color:#f8fafc;}}
-  .agenda-summary{{color:#94a3b8;font-size:0.9rem;margin-top:6px;}}
-  .agenda-meta{{display:flex;gap:16px;flex-wrap:wrap;color:#94a3b8;font-size:0.85rem;margin-top:10px;}}
-  .agenda-meta .chip{{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:rgba(15,23,42,0.65);border:1px solid rgba(148,163,184,0.18);}}
-  .agenda-meta .chip strong{{color:#f8fafc;font-weight:600;}}
-  .agenda-table{{background:rgba(15,23,42,0.78);}}
-  .agenda-table thead th{{background:rgba(148,163,184,0.08);border-bottom:1px solid rgba(148,163,184,0.2);color:#94a3b8;font-size:0.75rem;letter-spacing:0.05em;text-transform:uppercase;}}
-  .agenda-table tbody tr{{border-bottom:1px solid rgba(148,163,184,0.14);}}
-  .agenda-table tbody tr:last-child{{border-bottom:none;}}
-  .agenda-table td{{padding:16px 18px;vertical-align:middle;}}
-  .agenda-table tbody tr:hover{{background:rgba(59,130,246,0.08);}}
-  .agenda-time{{font-size:0.95rem;}}
-  .agenda-owner{{color:#cbd5f5;font-size:0.9rem;}}
-  .badge.bg-primary{{background:rgba(59,130,246,0.25)!important;color:#9cbdfc;border:1px solid rgba(59,130,246,0.55);}}
-  .badge.bg-secondary{{background:rgba(148,163,184,0.2)!important;color:#e2e8f0;border:1px solid rgba(148,163,184,0.4);}}
-  .agenda-footer{{padding:18px 28px;border-top:1px solid rgba(148,163,184,0.18);display:flex;justify-content:space-between;align-items:center;font-size:0.82rem;color:#94a3b8;}}
-  .agenda-footer .stat{{display:flex;align-items:center;gap:8px;}}
-  @media (max-width: 768px){{ 
-    .agenda-table thead{{display:none;}}
-    .agenda-table tbody tr{{display:block;padding:20px 18px;}}
-    .agenda-table tbody td{{display:flex;justify-content:space-between;border-bottom:1px solid rgba(148,163,184,0.12);padding:8px 0;}}
-    .agenda-table tbody td::before{{content:attr(data-label);font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:0.04em;}}
-    .agenda-table tbody td:last-child{{border-bottom:none;}}
-    .agenda-meta{{flex-direction:column;align-items:flex-start;}}
-  }}
-</style>
-<div class="agenda-shell">
-  <div class="agenda-card">
-    <div class="agenda-header">
-      <h4 class="mb-2 text-uppercase text-muted small" style="letter-spacing:0.08em;">Calendar Snapshot</h4>
-      <h2 class="mb-1" style="font-weight:700;color:#f8fafc;">{heading}</h2>
-      <div class="agenda-meta">
-        <span class="chip"><span class="badge bg-primary">{total}</span><strong>Meetings</strong></span>
-        <span class="chip"><strong>First start</strong> {start_label}</span>
-        <span class="chip"><strong>Generated</strong> {generated_label} • {generated_date}</span>
-      </div>
-    </div>
-    <div class="table-responsive agenda-table">
-      <table class="table table-dark table-hover mb-0">
-        <thead>
-          <tr>
-            <th scope="col">#</th>
-            <th scope="col">Time</th>
-            <th scope="col">Session</th>
-            <th scope="col">Organizer</th>
-            <th scope="col">Required</th>
-            <th scope="col">Optional</th>
-          </tr>
-        </thead>
-        <tbody>
-          {table_html}
-        </tbody>
-      </table>
-    </div>
-    <div class="agenda-footer">
-      <span class="stat">macOS Actions • Meetings Today</span>
-      <span class="stat">Powered by your local gateway</span>
-    </div>
-  </div>
-</div>
-""".strip()
+    rows: List[str] = []
+    for event in events:
+        ordinal = int(event.get("ordinal") or len(rows) + 1)
+        time_range = _escape_md(_format_time_range(event.get("start"), event.get("end")))
+        title = _escape_md(event.get("title") or "Untitled Meeting")
+        summary = event.get("summary") or ""
+        summary_block = f" — _{_escape_md(summary)}_" if summary else ""
+        organizer = _escape_md(event.get("organizer") or "—")
+
+        required_trimmed = event.get("required_attendees") or []
+        required_full = event.get("required_attendees_full") or required_trimmed
+        overflow = max(len(required_full) - len(required_trimmed), 0)
+        required_text = _format_people(required_trimmed)
+        if overflow:
+            required_text = f"{required_text} +{overflow} more"
+
+        optional_count = len(event.get("optional_attendees_full") or [])
+        optional_fragment = f" _(optional attendees: {optional_count})_" if optional_count else ""
+        command_hint = f"`meetings_today_detail({ordinal})`"
+
+        session_cell = f"**{title}**{summary_block}{optional_fragment}"
+
+        rows.append(
+            f"| {ordinal:02d} | {time_range} | {session_cell} | {organizer} | {required_text} | {command_hint} |"
+        )
+
+    table_header = (
+        "| # | Time | Session | Organizer | Required | Detail |\n"
+        "|---|------|---------|-----------|----------|--------|\n"
+    )
+    table_rows = "\n".join(rows)
+
+    intro = (
+        f"### 📅 {heading}\n"
+        f"> Meetings scheduled: **{total}** | First start: **{start_label}** | Generated: **{generated_label}**, {generated_date}\n\n"
+    )
+
+    footer = (
+        "\n_Run `meetings_today_detail(<number>)` to fetch the expanded view for any row._\n"
+        "\n_Provided by macOS Actions • Meetings Today_\n"
+    )
+
+    return f"{intro}{table_header}{table_rows}{footer}"
+
+
+def _render_meeting_detail(event: Dict[str, Any]) -> str:
+    ordinal = event.get("ordinal")
+    title = _escape_md(event.get("title") or "Untitled Meeting")
+    time_range = _escape_md(_format_time_range(event.get("start"), event.get("end")))
+    organizer = _escape_md(event.get("organizer") or "—")
+    calendar = _escape_md(event.get("calendar") or "—")
+    location = _escape_md(event.get("location") or "—")
+    is_all_day = bool(event.get("is_all_day"))
+    url = event.get("url")
+
+    header = f"### 🗒️ Meeting Detail #{ordinal}\n\n**{title}**\n"
+
+    meta_lines = [
+        f"- **When:** {time_range}",
+        f"- **Organizer:** {organizer}",
+        f"- **Calendar:** {calendar}",
+        f"- **Location:** {location or '_Not set_'}",
+        f"- **All-day:** {'Yes' if is_all_day else 'No'}",
+    ]
+
+    required_full = event.get("required_attendees_full") or []
+    optional_full = event.get("optional_attendees_full") or []
+
+    attendees_section = "\n".join(
+        [
+            "\n**Required attendees**",
+            _format_people_list(required_full),
+            "\n**Optional attendees**",
+            _format_people_list(optional_full),
+        ]
+    )
+
+    notes = event.get("notes") or ""
+    notes_section = ""
+    if notes.strip():
+        notes_section = "\n**Notes**\n" + _format_blockquote(notes)
+
+    url_section = f"\n[Open meeting link]({url})" if url else ""
+
+    parts = [header, *meta_lines, attendees_section, notes_section, url_section]
+    return "\n".join(part for part in parts if part).strip()
+
 
 def _format_script_message(script: str, status: int, mimetype: str, payload_bytes: bytes) -> str:
     decoded = payload_bytes.decode("utf-8", errors="replace").strip()
@@ -373,20 +400,27 @@ def _format_script_message(script: str, status: int, mimetype: str, payload_byte
             data = None
 
         if isinstance(data, dict):
-            ok = data.get("ok", True)
+            ok_flag = data.get("ok", True)
             parsed = data.get("parsed")
             stdout = data.get("stdout")
             stderr = data.get("stderr")
 
-            if script == "meetings_today" and isinstance(parsed, dict):
-                events = parsed.get("events")
-                if isinstance(events, list):
-                    if not ok:
-                        error_body = stdout or json.dumps(data, indent=2, ensure_ascii=False)
-                        if stderr:
-                            error_body = f"{error_body}\n\n[stderr]\n{stderr}"
-                        return f"{heading} (failed)\n\n{error_body}"
-                    return _render_meetings_table(events)
+            if script in {"meetings_today", "meetings_today_detail"} and isinstance(parsed, dict):
+                payload_ok = parsed.get("ok", True)
+                if not (ok_flag and payload_ok):
+                    error_body = parsed.get("error") or stdout or json.dumps(data, indent=2, ensure_ascii=False)
+                    if stderr:
+                        error_body = f"{error_body}\n\n[stderr]\n{stderr}"
+                    return f"{heading} (failed)\n\n{error_body}"
+
+                if script == "meetings_today":
+                    events = parsed.get("events") or []
+                    return f"{heading}\n\n{_render_meetings_summary(events)}"
+
+                event_detail = parsed.get("event")
+                if isinstance(event_detail, dict):
+                    return f"{heading}\n\n{_render_meeting_detail(event_detail)}"
+                return f"{heading}\n\n_No meeting detail available._"
 
             if parsed is not None:
                 body = _pretty(parsed)
@@ -398,7 +432,7 @@ def _format_script_message(script: str, status: int, mimetype: str, payload_byte
             if stderr:
                 body = f"{body}\n\n[stderr]\n{stderr}"
 
-            if not ok:
+            if not ok_flag:
                 heading = f"{heading} (failed)"
 
             return f"{heading}\n\n{body.strip() or '[no output]'}"

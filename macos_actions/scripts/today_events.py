@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-"""Return today's calendar events (including recurring occurrences) as JSON."""
+"""Return today's calendar events (including recurring occurrences) as JSON.
+
+The script can optionally accept an event index (1-based) to emit a single
+expanded record. When no index is supplied it returns the full list for today.
+"""
+
 import json
+import sys
 import threading
 from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 from Foundation import NSDate, NSRunLoop
 from EventKit import (
@@ -17,9 +24,12 @@ except ImportError:  # constant name differs on some macOS versions
     EKParticipantRoleOptional = 1
 
 LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone.utc
+MAX_REQUIRED = 5
+MAX_OPTIONAL = 5
+SUMMARY_LENGTH = 160
 
 
-def nsdate_to_local_iso(nsdate: NSDate) -> str:
+def nsdate_to_local_iso(nsdate: Optional[NSDate]) -> str:
     if nsdate is None:
         return ""
     return datetime.fromtimestamp(nsdate.timeIntervalSince1970(), tz=LOCAL_TZ).isoformat()
@@ -48,8 +58,9 @@ def request_calendar_access(store: EKEventStore) -> bool:
     return result["granted"]
 
 
-def attendees_by_role(attendees):
-    required, optional = [], []
+def attendees_by_role(attendees) -> Tuple[List[str], List[str]]:
+    required: List[str] = []
+    optional: List[str] = []
     if not attendees:
         return required, optional
 
@@ -64,37 +75,58 @@ def attendees_by_role(attendees):
     return required, optional
 
 
-def event_record(event):
+def render_event_record(event, ordinal: int) -> Dict[str, Any]:
     start_iso = nsdate_to_local_iso(event.startDate())
     end_iso = nsdate_to_local_iso(event.endDate())
 
-    required, optional = attendees_by_role(event.attendees())
+    required_full, optional_full = attendees_by_role(event.attendees())
     organiser = ""
     if event.organizer():
         organiser = event.organizer().name() or event.organizer().emailAddress() or ""
 
-    notes = event.notes() or ""
+    notes = (event.notes() or "").strip()
+    summary = notes[:SUMMARY_LENGTH]
+    calendar_title = ""
+    if event.calendar():
+        calendar_title = event.calendar().title() or ""
 
-    max_required = 5
-    max_optional = 5
+    url_value = ""
+    if event.URL():
+        try:
+            url_value = str(event.URL().absoluteString())
+        except Exception:
+            url_value = str(event.URL())
 
-    return {
+    try:
+        is_all_day = bool(event.isAllDay())
+    except Exception:
+        try:
+            is_all_day = bool(event.allDay())
+        except Exception:
+            is_all_day = False
+
+    record: Dict[str, Any] = {
+        "ordinal": ordinal,
+        "id": event.eventIdentifier() or "",
         "title": event.title() or "",
         "start": start_iso,
         "end": end_iso,
         "organizer": organiser,
-        "required_attendees": required[:max_required],
-        "optional_attendees": optional[:max_optional],
-        "summary": notes[:160],
+        "calendar": calendar_title,
+        "location": event.location() or "",
+        "is_all_day": is_all_day,
+        "url": url_value,
+        "required_attendees": required_full[:MAX_REQUIRED],
+        "optional_attendees": optional_full[:MAX_OPTIONAL],
+        "required_attendees_full": required_full,
+        "optional_attendees_full": optional_full,
+        "summary": summary,
+        "notes": notes,
     }
+    return record
 
 
-def main():
-    store = EKEventStore.alloc().init()
-    if not request_calendar_access(store):
-        print(json.dumps({"events": [], "error": "calendar access not granted"}))
-        return
-
+def build_event_payload(store: EKEventStore) -> List[Dict[str, Any]]:
     now = datetime.now(tz=LOCAL_TZ)
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_day = start_of_day + timedelta(days=1)
@@ -108,7 +140,52 @@ def main():
     events = store.eventsMatchingPredicate_(predicate) or []
     events.sort(key=lambda ev: ev.startDate())
 
-    payload = {"events": [event_record(ev) for ev in events]}
+    return [render_event_record(ev, idx) for idx, ev in enumerate(events, start=1)]
+
+
+def parse_index_argument(argv: List[str]) -> Optional[int]:
+    if not argv:
+        return None
+
+    tokens = list(argv)
+    if tokens[0] == "--index" and len(tokens) >= 2:
+        tokens = [tokens[1]]
+
+    candidate = tokens[0]
+    if candidate.startswith("--index="):
+        candidate = candidate.split("=", 1)[1]
+
+    try:
+        index = int(candidate)
+    except ValueError:
+        return None
+
+    return index if index > 0 else None
+
+
+def main():
+    detail_index = parse_index_argument(sys.argv[1:])
+
+    store = EKEventStore.alloc().init()
+    if not request_calendar_access(store):
+        print(json.dumps({"ok": False, "error": "calendar access not granted"}))
+        return
+
+    records = build_event_payload(store)
+
+    if detail_index is not None:
+        match = next((item for item in records if item["ordinal"] == detail_index), None)
+        if not match:
+            payload = {
+                "ok": False,
+                "error": f"No meeting found for index {detail_index}",
+                "events_count": len(records),
+            }
+        else:
+            payload = {"ok": True, "event": match, "events_count": len(records)}
+    else:
+        payload = {"ok": True, "events": records}
+
     print(json.dumps(payload, ensure_ascii=False))
 
 
