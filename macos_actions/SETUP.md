@@ -75,7 +75,7 @@ the same steps manually in case you prefer to perform them yourself.
 
    ```yaml
    scripts:
-     fetch_email_yesterday:
+     fetch_yesterday_emails:
        type: applescript
        path: "~/ollama/macos_actions/scripts/Fetch_Yesterday_Emails.applescript"
      fetch_weekend_emails:
@@ -219,11 +219,14 @@ Stop uvicorn once satisfied (Ctrl+C).
    cat <<'SH' > ~/ollama/macos_actions/bin/start-gateway.sh
    #!/bin/bash
    set -euo pipefail
-   BASE_DIR="$HOME/ollama/macos_actions"
+   REPO_DIR="$HOME/ollama"
+   BASE_DIR="$REPO_DIR/macos_actions"
+
+   cd "$REPO_DIR"
    source "$BASE_DIR/.venv/bin/activate"
    export OSX_ACTIONS_CONFIG="$HOME/Library/Application Support/macos_actions/actions.yml"
    export OSX_ACTIONS_KEY="$(/usr/bin/security find-generic-password -s osx_actions_key -w)"
-   exec uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
+   exec python -m uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765 --app-dir "$REPO_DIR"
    SH
    chmod 700 ~/ollama/macos_actions/bin/start-gateway.sh
    ```
@@ -240,19 +243,22 @@ Stop uvicorn once satisfied (Ctrl+C).
        <key>ProgramArguments</key>
        <array>
          <string>/bin/bash</string>
-         <string>$HOME/ollama/macos_actions/bin/start-gateway.sh</string>
+         <string>-lc</string>
+         <string>/Users/you/ollama/macos_actions/bin/start-gateway.sh</string>
        </array>
        <key>RunAtLoad</key>
        <true/>
        <key>KeepAlive</key>
        <true/>
        <key>StandardOutPath</key>
-       <string>$HOME/Library/Logs/macos_actions.out</string>
+       <string>/Users/you/Library/Logs/macos_actions.out</string>
        <key>StandardErrorPath</key>
-       <string>$HOME/Library/Logs/macos_actions.err</string>
+       <string>/Users/you/Library/Logs/macos_actions.err</string>
      </dict>
    </plist>
    ```
+
+   Replace `/Users/you` with the path to your macOS home directory.
 
 3. Load the agent:
 
