@@ -146,11 +146,11 @@ LaunchAgent environment instead. Keychain is recommended.)
 1. Start the API with uvicorn inside the virtualenv:
 
    ```bash
-   cd ~/ollama/macos_actions
-   source .venv/bin/activate
+   cd ~/ollama
+   source macos_actions/.venv/bin/activate
    export OSX_ACTIONS_KEY="$(security find-generic-password -s osx_actions_key -w)"
    export OSX_ACTIONS_CONFIG="${HOME}/Library/Application Support/macos_actions/actions.yml"
-   python -m uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765
+   python -m uvicorn macos_actions.service.main:app --host 127.0.0.1 --port 8765 --app-dir .
    ```
 
 2. In another terminal, call the health endpoint:
