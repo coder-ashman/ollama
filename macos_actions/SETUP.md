@@ -105,9 +105,8 @@ the same steps manually in case you prefer to perform them yourself.
 cd ~/ollama/macos_actions
 /opt/homebrew/bin/python3.11 -m venv .venv  # use your 3.11 interpreter
 source .venv/bin/activate
-cd ..
 pip install --upgrade pip
-pip install -r macos_actions/requirements.txt
+pip install -r requirements.txt
 ```
 
 > Installing `pyobjc` (bundled in the requirements file) downloads many wheels
@@ -234,18 +233,25 @@ Stop uvicorn once satisfied (Ctrl+C).
    ```xml
    <?xml version="1.0" encoding="UTF-8"?>
    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-   <plist version="1.0"><dict>
-  <key>Label</key><string>com.you.macos_actions</string>
-     <key>ProgramArguments</key>
-     <array>
-       <string>/bin/bash</string>
-    <string>$HOME/ollama/macos_actions/bin/start-gateway.sh</string>
-     </array>
-     <key>RunAtLoad</key><true/>
-     <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>$HOME/Library/Logs/macos_actions.out</string>
-  <key>StandardErrorPath</key><string>$HOME/Library/Logs/macos_actions.err</string>
-   </dict></plist>
+   <plist version="1.0">
+     <dict>
+       <key>Label</key>
+       <string>com.you.macos_actions</string>
+       <key>ProgramArguments</key>
+       <array>
+         <string>/bin/bash</string>
+         <string>$HOME/ollama/macos_actions/bin/start-gateway.sh</string>
+       </array>
+       <key>RunAtLoad</key>
+       <true/>
+       <key>KeepAlive</key>
+       <true/>
+       <key>StandardOutPath</key>
+       <string>$HOME/Library/Logs/macos_actions.out</string>
+       <key>StandardErrorPath</key>
+       <string>$HOME/Library/Logs/macos_actions.err</string>
+     </dict>
+   </plist>
    ```
 
 3. Load the agent:
