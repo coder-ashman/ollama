@@ -510,8 +510,10 @@ def _email_window_label(script: str, window_info: Optional[Dict[str, Any]] = Non
 
 def _email_system_prompt() -> str:
     return (
-        "You are an executive assistant. Analyse the provided email metadata and craft concise Markdown "
-        "summaries grouped by conversation threads. Base every statement strictly on the supplied data."
+        "You are an executive assistant producing a concise Markdown digest of recent email threads. "
+        "Follow the required format exactly. Do not include instructions, code samples, or analysis about how to solve tasks. "
+        "Do not return JSON. Respond only with the Markdown sections requested. "
+        "If information is missing for a field, state 'None' or 'Not enough info' instead of inventing details."
     )
 
 
@@ -559,6 +561,10 @@ def _email_user_prompt(
         "- My Actions: concrete follow-ups expected of me. If none, respond with 'None'.\n"
         "- Note if the latest message in the thread is unread.\n\n"
         "End the report with a short '**Quick glance:**' bullet list highlighting any threads with pending actions for me.\n\n"
+        "Important formatting rules:\n"
+        "- Respond only with the Markdown described above.\n"
+        "- Do not include explanations, instructions, JSON, or code snippets.\n"
+        "- Avoid fenced code blocks except for the provided JSON dataset.\n\n"
         "Message dataset (chronological order, earliest first):\n"
         "```json\n"
         f"{dataset}\n"
