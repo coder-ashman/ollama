@@ -9,7 +9,15 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from flask import Response, current_app
 
-from .config import OSX_ACTIONS_BASE, OSX_ACTIONS_KEY, OSX_ACTIONS_TIMEOUT
+from .config import (
+    CAP_DEEP,
+    FALLBACK_7B,
+    OLLAMA,
+    OSX_ACTIONS_BASE,
+    OSX_ACTIONS_KEY,
+    OSX_ACTIONS_TIMEOUT,
+    READ_TIMEOUT,
+)
 
 _ENDPOINTS = {
     "fetch_yesterday_emails": "/scripts/fetch_yesterday_emails/run",
@@ -236,6 +244,8 @@ def _format_time_range(start_iso: Optional[str], end_iso: Optional[str]) -> str:
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
+_EMAIL_PREFIX_RE = re.compile(r"^(?:(re|fw|fwd|sv|aw|antwort|ref|rv)\s*[:：]\s*)+", re.IGNORECASE)
+_EMAIL_BRACKET_RE = re.compile(r"<([^>]+)>")
 
 
 def _strip_html(value: Any) -> str:
@@ -305,6 +315,272 @@ def _format_blockquote(text: str) -> str:
         return ""
     lines = [line.rstrip() for line in cleaned.splitlines()]
     return "\n".join(f"> {_escape_md(line) or ' '}" for line in lines)
+
+
+def _canonical_subject(subject: Any) -> str:
+    cleaned = _strip_html(subject)
+    if not cleaned:
+        return "(no subject)"
+    candidate = cleaned.strip()
+    # Remove common reply/forward prefixes while preserving inner text.
+    loop_guard = 0
+    while True:
+        loop_guard += 1
+        if loop_guard > 5:
+            break
+        match = _EMAIL_PREFIX_RE.match(candidate)
+        if not match:
+            break
+        candidate = candidate[match.end():].lstrip()
+    candidate = re.sub(r"\s+", " ", candidate).strip()
+    return candidate.lower() or "(no subject)"
+
+
+def _excerpt(text: Any, limit: int = 480) -> str:
+    cleaned = _strip_html(text)
+    if not cleaned:
+        return ""
+    normalized = re.sub(r"\s+", " ", cleaned).strip()
+    if len(normalized) <= limit:
+        return normalized
+    trimmed = normalized[: max(0, limit - 3)].rstrip()
+    return f"{trimmed}..."
+
+
+def _dedupe_people(values: List[Any]) -> List[str]:
+    seen: set[str] = set()
+    result: List[str] = []
+    for value in values:
+        label = _strip_html(value)
+        if not label:
+            continue
+        tokens = _candidate_identity_tokens(label)
+        if not tokens:
+            token_key = _normalize_name(label) or label.lower()
+            tokens = [token_key]
+        key = next((token for token in tokens if token), None)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(label)
+    return result
+
+
+def _candidate_identity_tokens(value: Any) -> List[str]:
+    text = str(value or "")
+    if not text:
+        return []
+    tokens: List[str] = []
+    stripped = text.strip()
+    normalized = _normalize_name(stripped)
+    if normalized:
+        tokens.append(normalized)
+    bracket_match = _EMAIL_BRACKET_RE.search(stripped)
+    if bracket_match:
+        bracket_content = bracket_match.group(1)
+        if bracket_content:
+            normalized_bracket = _normalize_name(bracket_content)
+            if normalized_bracket:
+                tokens.append(normalized_bracket)
+            if "@" in bracket_content:
+                local = bracket_content.split("@", 1)[0]
+                local_norm = _normalize_name(local)
+                if local_norm:
+                    tokens.append(local_norm)
+    if "@" in stripped:
+        local = stripped.split("@", 1)[0]
+        local_norm = _normalize_name(local)
+        if local_norm:
+            tokens.append(local_norm)
+    tokens = [token for token in tokens if token]
+    # Preserve order while deduplicating.
+    seen_tokens: set[str] = set()
+    ordered: List[str] = []
+    for token in tokens:
+        if token in seen_tokens:
+            continue
+        seen_tokens.add(token)
+        ordered.append(token)
+    return ordered
+
+
+def _is_self_identifier(value: Any) -> bool:
+    tokens = _candidate_identity_tokens(value)
+    if not tokens:
+        return False
+    for ident in _SELF_IDENTIFIERS:
+        if not ident:
+            continue
+        if any(token == ident for token in tokens):
+            return True
+    return False
+
+
+def _prepare_email_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    prepared: List[Dict[str, Any]] = []
+    for idx, raw in enumerate(messages, start=1):
+        subject_raw = raw.get("subject") if isinstance(raw, dict) else None
+        subject_clean = _strip_html(subject_raw) or "(No Subject)"
+        canonical = _canonical_subject(subject_raw)
+        sender = _strip_html(raw.get("sender") if isinstance(raw, dict) else "")
+
+        to_values = raw.get("to_recipients") if isinstance(raw, dict) else None
+        cc_values = raw.get("cc_recipients") if isinstance(raw, dict) else None
+        if not isinstance(to_values, list):
+            to_values = []
+        if not isinstance(cc_values, list):
+            cc_values = []
+
+        prepared.append(
+            {
+                "index": idx,
+                "subject": subject_clean,
+                "canonical_subject": canonical,
+                "sender": sender,
+                "sender_is_me": _is_self_identifier(sender),
+                "recipients_to": _dedupe_people(to_values),
+                "recipients_cc": _dedupe_people(cc_values),
+                "mailbox": _strip_html(raw.get("mailbox") if isinstance(raw, dict) else ""),
+                "date_received": _strip_html(raw.get("date_received") if isinstance(raw, dict) else ""),
+                "is_unread": not bool(raw.get("read")) if isinstance(raw, dict) and "read" in raw else False,
+                "body_preview": _excerpt(raw.get("body") if isinstance(raw, dict) else ""),
+            }
+        )
+    return prepared
+
+
+def _email_window_label(script: str) -> str:
+    labels = {
+        "fetch_yesterday_emails": "Yesterday's Unread Emails",
+        "fetch_weekend_emails": "Weekend Emails",
+        "unread_last_hour": "Last Hour Unread Emails",
+    }
+    return labels.get(script, "Email Digest")
+
+
+def _email_system_prompt() -> str:
+    return (
+        "You are an executive assistant. Analyse the provided email metadata and craft concise Markdown "
+        "summaries grouped by conversation threads. Base every statement strictly on the supplied data."
+    )
+
+
+def _email_user_prompt(prepared: List[Dict[str, Any]], script: str) -> str:
+    window = _email_window_label(script)
+    if _SELF_IDENTIFIERS:
+        me_label = ", ".join(_SELF_IDENTIFIERS)
+    else:
+        me_label = "Not provided"
+
+    dataset = json.dumps(prepared, indent=2, ensure_ascii=False)
+    instructions = (
+        f"Window: {window}\n"
+        f"My identifiers: {me_label}\n\n"
+        "Instructions:\n"
+        "- Group messages into threads representing the same conversation. Use canonical_subject as a hint;\n"
+        "  merge messages that clearly belong together, even if the subject varies slightly (e.g., RE/FW prefixes).\n"
+        "- For each thread produce Markdown exactly in this structure:\n"
+        "#### Thread {n}: {thread title}\n"
+        "- Sender: person who authored the latest email directed at me.\n"
+        "- Recipients: unique To + Cc recipients (comma separated).\n"
+        "- Replies: participants who replied after the original sender. Include me if sender_is_me is true on any entry beyond the first message.\n"
+        "- Summary: 1-3 sentences capturing the current state or decisions in the thread. Mention if any message preview lacks detail (say 'Summary: Not enough info').\n"
+        "- My Actions: concrete follow-ups expected of me. If none, respond with 'None'.\n"
+        "- Note if the latest message in the thread is unread.\n\n"
+        "End the report with a short '**Quick glance:**' bullet list highlighting any threads with pending actions for me.\n\n"
+        "Message dataset (chronological order, earliest first):\n"
+        "```json\n"
+        f"{dataset}\n"
+        "```"
+    )
+    return instructions
+
+
+def _invoke_email_summary_llm(system_prompt: str, user_prompt: str, model: Optional[str]) -> Optional[str]:
+    if not OLLAMA:
+        _logger().warning("OLLAMA base URL not configured; skipping email summary call")
+        return None
+
+    payload = {
+        "model": model or FALLBACK_7B,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "stream": False,
+        "options": dict(CAP_DEEP),
+    }
+
+    try:
+        resp = requests.post(
+            f"{OLLAMA}/api/chat",
+            json=payload,
+            timeout=(10, READ_TIMEOUT),
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        _logger().error("Email summary LLM request failed: %s", exc)
+        return None
+
+    try:
+        body = resp.json()
+    except ValueError:
+        text = resp.text.strip()
+        return text or None
+
+    if isinstance(body, dict):
+        message = body.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+        response_text = body.get("response")
+        if isinstance(response_text, str) and response_text.strip():
+            return response_text.strip()
+    return None
+
+
+def _fallback_email_summary(prepared: List[Dict[str, Any]], script: str) -> str:
+    window = _email_window_label(script)
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for item in prepared:
+        key = item.get("canonical_subject") or "(no subject)"
+        grouped.setdefault(key, []).append(item)
+
+    lines = [f"### 📬 {window}", "", "_LLM summary unavailable; raw highlights below._", ""]
+    for idx, (_key, items) in enumerate(grouped.items(), start=1):
+        items_sorted = sorted(items, key=lambda entry: entry.get("index", 0))
+        latest = items_sorted[-1]
+        subject = latest.get("subject") or "(No Subject)"
+        sender = latest.get("sender") or "Unknown sender"
+        recipients = latest.get("recipients_to", []) + latest.get("recipients_cc", [])
+        unread_flag = " (unread)" if latest.get("is_unread") else ""
+        lines.append(f"#### Thread {idx}: {subject}{unread_flag}")
+        lines.append(f"- Sender: {sender}")
+        lines.append(f"- Recipients: {', '.join(recipients) if recipients else 'None listed'}")
+        replies = {entry.get("sender") for entry in items_sorted[1:]} - {sender}
+        reply_label = ", ".join(sorted(filter(None, replies))) if replies else "None noted"
+        lines.append(f"- Replies: {reply_label}")
+        preview = latest.get("body_preview") or "No preview available."
+        lines.append(f"- Summary: {preview}")
+        lines.append("- My Actions: Unknown")
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def _render_email_summary(messages: List[Dict[str, Any]], script: str, model: Optional[str]) -> Optional[str]:
+    prepared = _prepare_email_messages(messages)
+    if not prepared:
+        window = _email_window_label(script)
+        return f"### 📬 {window}\n\n> No emails were found in this window."
+
+    system_prompt = _email_system_prompt()
+    user_prompt = _email_user_prompt(prepared, script)
+    summary = _invoke_email_summary_llm(system_prompt, user_prompt, model)
+    if summary:
+        return summary
+    return _fallback_email_summary(prepared, script)
 
 
 _SELF_IDENTIFIERS: List[str] = []
@@ -491,7 +767,14 @@ def _render_meeting_detail(event: Dict[str, Any]) -> str:
     return "\n".join(part for part in parts if part).strip()
 
 
-def _format_script_message(script: str, status: int, mimetype: str, payload_bytes: bytes) -> str:
+def _format_script_message(
+    script: str,
+    status: int,
+    mimetype: str,
+    payload_bytes: bytes,
+    *,
+    model: Optional[str] = None,
+) -> str:
     decoded = payload_bytes.decode("utf-8", errors="replace").strip()
     heading = f"macOS Actions :: {script}"
 
@@ -510,6 +793,37 @@ def _format_script_message(script: str, status: int, mimetype: str, payload_byte
             parsed = data.get("parsed")
             stdout = data.get("stdout")
             stderr = data.get("stderr")
+
+            if script in {"fetch_yesterday_emails", "fetch_weekend_emails", "unread_last_hour"}:
+                payload_dict: Optional[Dict[str, Any]] = parsed if isinstance(parsed, dict) else None
+
+                if payload_dict is None and isinstance(stdout, str):
+                    candidate = stdout.strip()
+                    if candidate:
+                        try:
+                            maybe = json.loads(candidate)
+                            if isinstance(maybe, dict):
+                                payload_dict = maybe
+                        except json.JSONDecodeError:
+                            pass
+
+                messages: List[Dict[str, Any]] = []
+                if isinstance(payload_dict, dict):
+                    extracted = payload_dict.get("messages")
+                    if isinstance(extracted, list):
+                        messages = [msg for msg in extracted if isinstance(msg, dict)]
+
+                if not messages:
+                    error_body = stderr or stdout or "No email messages found."
+                    status_label = " (failed)" if not ok_flag else ""
+                    return f"{heading}{status_label}\n\n{error_body}"
+
+                summary_text = _render_email_summary(messages, script, model)
+                if stderr:
+                    summary_text = f"{summary_text}\n\n[stderr]\n{stderr}"
+                if not ok_flag:
+                    heading = f"{heading} (failed)"
+                return f"{heading}\n\n{summary_text}"
 
             if script in {"meetings_today", "meetings_today_detail"} and isinstance(parsed, dict):
                 payload_ok = parsed.get("ok", True)
@@ -583,8 +897,9 @@ def maybe_handle_chat(body: Dict[str, Any]) -> Optional[Response]:
     script, payload = extraction
     status, mimetype, content, normalized = _invoke_script(script, payload)
     script_name = normalized or script
-    message = _format_script_message(script_name, status, mimetype, content)
-    return _chat_response(message, body.get("model"))
+    model = body.get("model")
+    message = _format_script_message(script_name, status, mimetype, content, model=model)
+    return _chat_response(message, model)
 
 
 __all__ = ["call_script", "maybe_handle_chat"]

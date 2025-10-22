@@ -312,6 +312,23 @@ Mail/Calendar. Approve these prompts.
    fetches the expanded view for meeting #1. You can also hit the Gateway
    directly if you do not need the relay.
 
+### Email thread summaries
+
+- The `fetch_yesterday_emails`, `fetch_weekend_emails`, and `unread_last_hour`
+  scripts now emit extra metadata (sender, To, Cc, unread flag, message body
+  snippet). When autosizer relays these scripts, it calls the Ollama endpoint
+  referenced by `TARGET_OLLAMA` to group the messages into threads and return a
+  Markdown summary (sender, recipients, replies, action items).
+- Ensure the autosizer container can reach your Ollama host. If it differs from
+  the default `http://ollama:11434`, set `TARGET_OLLAMA` in the autosizer
+  environment block (e.g., `TARGET_OLLAMA=http://host.lima.internal:11434`).
+- `OSX_ACTIONS_SELF` / `OSX_ACTIONS_SELF_ALIASES` help the formatter recognise
+  when *you* authored or are required on a thread. Supply comma-separated
+  usernames/emails; include nicknames if you reply from aliases.
+- If the LLM call fails, the proxy falls back to a basic per-thread outline so
+  you still see raw highlights. Check the autosizer logs for
+  `Email summary LLM request failed` to diagnose network or credentials issues.
+
 ---
 
 ## 10. Scheduling checks (optional)

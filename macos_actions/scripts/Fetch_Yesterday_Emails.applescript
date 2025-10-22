@@ -58,6 +58,8 @@ on message_fragment(msg, mailboxName)
 		set readFlag to read status of msg
 		set dateText to my safe_text(date received of msg as string)
 		set bodyText to my safe_text(content of msg as text)
+		set toRecipientsJSON to my recipients_json(to recipients of msg)
+		set ccRecipientsJSON to my recipients_json(cc recipients of msg)
 	end using terms from
 	set mailboxText to my safe_text(mailboxName)
 	
@@ -68,6 +70,8 @@ on message_fragment(msg, mailboxName)
 	set fragment to fragment & ",\"message_id\":\"" & idText & "\""
 	set fragment to fragment & ",\"read\":" & (my bool_text(readFlag))
 	set fragment to fragment & ",\"mailbox\":\"" & mailboxText & "\""
+	set fragment to fragment & ",\"to_recipients\":" & toRecipientsJSON
+	set fragment to fragment & ",\"cc_recipients\":" & ccRecipientsJSON
 	if bodyText is not "" then
 		set fragment to fragment & ",\"body\":\"" & bodyText & "\""
 	end if
@@ -79,6 +83,39 @@ on safe_text(candidate)
 	if candidate is missing value then return ""
 	return my escape_json(candidate as text)
 end safe_text
+
+on raw_text(candidate)
+	if candidate is missing value then return ""
+	return candidate as text
+end raw_text
+
+on recipient_label(rcpt)
+	using terms from application "Mail"
+		set nameText to my raw_text(name of rcpt)
+		set addressText to my raw_text(address of rcpt)
+	end using terms from
+	if addressText is "" then return nameText
+	if nameText is "" then return addressText
+	return nameText & " <" & addressText & ">"
+end recipient_label
+
+on recipients_json(rcptList)
+	if rcptList is missing value then return "[]"
+	if rcptList is {} then return "[]"
+	set entries to {}
+	repeat with rcpt in rcptList
+		set label to my recipient_label(rcpt)
+		if label is not "" then
+			set safeLabel to my safe_text(label)
+			if safeLabel is not "" then set end of entries to "\"" & safeLabel & "\""
+		end if
+	end repeat
+	if entries is {} then return "[]"
+	set AppleScript's text item delimiters to ","
+	set joined to entries as text
+	set AppleScript's text item delimiters to ""
+	return "[" & joined & "]"
+end recipients_json
 
 on bool_text(flag)
 	if flag is true then return "true"
