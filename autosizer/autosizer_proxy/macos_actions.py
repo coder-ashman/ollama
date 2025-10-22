@@ -497,6 +497,21 @@ def _format_script_message(script: str, status: int, mimetype: str, payload_byte
                     return f"{heading}\n\n{_render_meetings_summary(events)}"
 
                 event_detail = parsed.get("event")
+                if not isinstance(event_detail, dict):
+                    if isinstance(parsed, dict) and {"title", "start"}.issubset(parsed.keys()):
+                        event_detail = parsed
+                    else:
+                        raw_stdout = data.get("stdout")
+                        if isinstance(raw_stdout, str):
+                            try:
+                                stdout_payload = json.loads(raw_stdout)
+                            except json.JSONDecodeError:
+                                stdout_payload = None
+                            if isinstance(stdout_payload, dict):
+                                maybe_event = stdout_payload.get("event")
+                                if isinstance(maybe_event, dict):
+                                    event_detail = maybe_event
+
                 if isinstance(event_detail, dict):
                     return f"{heading}\n\n{_render_meeting_detail(event_detail)}"
                 return f"{heading}\n\n_No meeting detail available._"
