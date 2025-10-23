@@ -110,7 +110,10 @@ def _invoke_single_script(script: str, payload: Optional[Dict[str, Any]] = None)
     return upstream.status_code, mimetype or "application/json", upstream.content, normalized
 
 
-def _run_briefing(script: str, payload: Optional[Dict[str, Any]]) -> Tuple[int, str, bytes, Optional[str]]:
+def _run_briefing(
+    script: str,
+    payload: Optional[Dict[str, Any]],
+) -> Tuple[int, str, bytes, Optional[str]]:
     kind = script.strip().lower()
     payload = payload or {}
 
@@ -138,17 +141,11 @@ def _run_briefing(script: str, payload: Optional[Dict[str, Any]]) -> Tuple[int, 
         )
 
     sections: List[str] = []
-    component_details: Dict[str, Any] = {}
 
     for name, component_payload in components:
         status, mimetype, content, normalized = _invoke_single_script(name, component_payload)
         if status != 200:
             return status, mimetype, content, normalized
-
-        try:
-            raw_data = json.loads(content.decode("utf-8", errors="replace"))
-        except json.JSONDecodeError:
-            raw_data = None
 
         component_text = _format_script_message(
             normalized or name,
@@ -158,21 +155,13 @@ def _run_briefing(script: str, payload: Optional[Dict[str, Any]]) -> Tuple[int, 
             suppress_header=True,
         )
         sections.append(component_text.strip())
-        component_details[name] = {
-            "payload": component_payload or {},
-            "body": component_text.strip(),
-            "raw": raw_data,
-        }
 
     divider = "\n\n---\n\n"
-    combined = f"{title}\n\n{divider.join(section for section in sections if section)}"
-
+    combined_markdown = f"{title}\n\n{divider.join(section for section in sections if section)}"
     payload_dict = {
         "ok": True,
         "parsed": {
-            "markdown": combined,
-            "components": component_details,
-            "title": title,
+            "markdown": combined_markdown,
         },
     }
     return (
@@ -251,6 +240,7 @@ def _parse_script_command(content: str) -> Optional[Tuple[str, Dict[str, Any]]]:
             cleaned = args.strip().strip("'\"")
             if cleaned:
                 return (name, {"start_time": cleaned})
+            return (name, {})
 
         if re.fullmatch(r"\d+", args):
             return (name, {"index": int(args)})
@@ -405,39 +395,6 @@ def _format_blockquote(text: str) -> str:
     return "\n".join(f"> {_escape_md(line) or ' '}" for line in lines)
 
 
-def _coerce_int(value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    try:
-        return int(str(value).strip())
-    except (ValueError, TypeError):
-        return None
-
-
-def _extract_email_window(payload: Dict[str, Any] | None) -> Dict[str, Any]:
-    if not isinstance(payload, dict):
-        return {}
-    window = payload.get("window")
-    if not isinstance(window, dict):
-        return {}
-
-    start_raw = window.get("start")
-    end_raw = window.get("end")
-    hours_back_val = window.get("hours_back")
-
-    start_clean = _strip_html(start_raw)
-    end_clean = _strip_html(end_raw)
-    hours_back = _coerce_int(hours_back_val)
-
-    return {
-        "start_raw": str(start_raw) if start_raw is not None else "",
-        "end_raw": str(end_raw) if end_raw is not None else "",
-        "start": start_clean,
-        "end": end_clean,
-        "hours_back": hours_back,
-    }
-
-
 def _canonical_subject(subject: Any) -> str:
     cleaned = _strip_html(subject)
     if not cleaned:
@@ -570,161 +527,37 @@ def _prepare_email_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, An
     return prepared
 
 
-def _aggregate_email_threads(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    threads: List[Dict[str, Any]] = []
-    by_subject: Dict[str, Dict[str, Any]] = {}
-
-    for message in messages:
-        canonical = message.get("canonical_subject") or "(no subject)"
-        thread = by_subject.get(canonical)
-        if not thread:
-            thread = {
-                "canonical_subject": canonical,
-                "subjects": [],
-                "messages": [],
-                "senders": set(),
-                "recipients_to": set(),
-                "recipients_cc": set(),
-                "mailboxes": set(),
-                "has_unread": False,
-                "latest_message": None,
-                "latest_index": -1,
-            }
-            by_subject[canonical] = thread
-            threads.append(thread)
-
-        subject_value = message.get("subject") or ""
-        if subject_value and subject_value not in thread["subjects"]:
-            thread["subjects"].append(subject_value)
-
-        thread["senders"].add(message.get("sender") or "")
-        for recip in message.get("recipients_to") or []:
-            thread["recipients_to"].add(recip)
-        for recip in message.get("recipients_cc") or []:
-            thread["recipients_cc"].add(recip)
-        mailbox = message.get("mailbox") or ""
-        if mailbox:
-            thread["mailboxes"].add(mailbox)
-        if message.get("is_unread"):
-            thread["has_unread"] = True
-
-        summary_entry = {
-            "index": message.get("index"),
-            "sender": message.get("sender"),
-            "recipients_to": message.get("recipients_to") or [],
-            "recipients_cc": message.get("recipients_cc") or [],
-            "date_received": message.get("date_received"),
-            "body_preview": message.get("body_preview"),
-            "is_unread": message.get("is_unread"),
-            "mailbox": mailbox,
-        }
-        thread["messages"].append(summary_entry)
-
-        index_value = message.get("index") or 0
-        try:
-            idx_numeric = int(index_value)
-        except (ValueError, TypeError):
-            idx_numeric = len(thread["messages"])
-        if idx_numeric >= thread["latest_index"]:
-            thread["latest_index"] = idx_numeric
-            thread["latest_message"] = summary_entry
-
-    for ordinal, thread in enumerate(threads, start=1):
-        thread["thread_id"] = ordinal
-        thread["messages_count"] = len(thread["messages"])
-        thread["subjects"] = sorted(set(thread["subjects"]))
-
-        to_sorted = sorted({_strip_html(val) for val in thread["recipients_to"] if _strip_html(val)}, key=str.lower)
-        cc_sorted = sorted({_strip_html(val) for val in thread["recipients_cc"] if _strip_html(val)}, key=str.lower)
-        senders_sorted = sorted({_strip_html(val) for val in thread["senders"] if _strip_html(val)}, key=str.lower)
-        mailboxes_sorted = sorted({_strip_html(val) for val in thread["mailboxes"] if _strip_html(val)}, key=str.lower)
-
-        thread["recipients_to"] = to_sorted
-        thread["recipients_cc"] = cc_sorted
-        thread["senders"] = senders_sorted
-        thread["mailboxes"] = mailboxes_sorted
-
-        participants = set()
-        participants.update(senders_sorted)
-        participants.update(to_sorted)
-        participants.update(cc_sorted)
-        thread["participants"] = sorted(participants, key=str.lower)
-
-    return threads
-
-
-def _email_window_label(script: str, window_info: Optional[Dict[str, Any]] = None) -> str:
+def _email_window_label(script: str) -> str:
     labels = {
         "fetch_yesterday_emails": "Yesterday's Unread Emails",
         "fetch_weekend_emails": "Weekend Emails",
         "unread_last_hour": "Last Hour Unread Emails",
     }
-    base = labels.get(script, "Email Digest")
-    info = window_info or {}
-
-    hours_back = info.get("hours_back")
-    if isinstance(hours_back, int) and hours_back > 0:
-        return f"{base} (last {hours_back}h)"
-
-    start = (info.get("start") or "").strip()
-    end = (info.get("end") or "").strip()
-
-    if start and end:
-        return f"{base} ({start} → {end})"
-    if start:
-        return f"{base} (since {start})"
-    return base
+    return labels.get(script, "Email Digest")
 
 
 def _email_system_prompt() -> str:
     return (
-        "You are an executive assistant producing a concise Markdown digest of recent email threads. "
-        "Follow the required format exactly. Do not include instructions, code samples, or analysis about how to solve tasks. "
-        "Do not return JSON. Respond only with the Markdown sections requested. "
-        "If information is missing for a field, state 'None' or 'Not enough info' instead of inventing details."
+        "You are an executive assistant. Analyse the provided email metadata and craft concise Markdown "
+        "summaries grouped by conversation threads. Base every statement strictly on the supplied data."
     )
 
 
-def _email_user_prompt(
-    prepared: List[Dict[str, Any]],
-    threads: List[Dict[str, Any]],
-    script: str,
-    window_info: Optional[Dict[str, Any]],
-) -> str:
-    window_label = _email_window_label(script, window_info)
+def _email_user_prompt(prepared: List[Dict[str, Any]], script: str) -> str:
+    window = _email_window_label(script)
     if _SELF_IDENTIFIERS:
         me_label = ", ".join(_SELF_IDENTIFIERS)
     else:
         me_label = "Not provided"
 
-    info = window_info or {}
-    start_desc = (info.get("start_raw") or info.get("start") or "").strip()
-    end_desc = (info.get("end_raw") or info.get("end") or "").strip()
-    hours_back = info.get("hours_back")
-
-    window_details: List[str] = []
-    if start_desc:
-        window_details.append(f"start: {start_desc}")
-    if end_desc:
-        window_details.append(f"end: {end_desc}")
-    if isinstance(hours_back, int) and hours_back > 0:
-        window_details.append(f"lookback_hours: {hours_back}")
-    if not window_details:
-        window_details = ["start: midnight today (local)", "end: now (local)"]
-
-    window_details_block = "\n".join(f"- {detail}" for detail in window_details)
-    dataset_payload = {
-        "threads": threads,
-        "messages_total": len(prepared),
-    }
-    dataset = json.dumps(dataset_payload, indent=2, ensure_ascii=False)
+    dataset = json.dumps(prepared, indent=2, ensure_ascii=False)
     instructions = (
-        f"Window: {window_label}\n"
-        f"{window_details_block}\n"
+        f"Window: {window}\n"
         f"My identifiers: {me_label}\n\n"
         "Instructions:\n"
-        "- Threads are already deduplicated. Iterate through the `threads` array in ascending `thread_id` order.\n"
-        "- Produce exactly one Markdown section per thread using this structure:\n"
+        "- Group messages into threads representing the same conversation. Use canonical_subject as a hint;\n"
+        "  merge messages that clearly belong together, even if the subject varies slightly (e.g., RE/FW prefixes).\n"
+        "- For each thread produce Markdown exactly in this structure:\n"
         "#### Thread {n}: {thread title}\n"
         "- Sender: person who authored the latest email directed at me.\n"
         "- Recipients: unique To + Cc recipients (comma separated).\n"
@@ -732,21 +565,7 @@ def _email_user_prompt(
         "- Summary: 1-3 sentences capturing the current state or decisions in the thread. Mention if any message preview lacks detail (say 'Summary: Not enough info').\n"
         "- My Actions: concrete follow-ups expected of me. If none, respond with 'None'.\n"
         "- Note if the latest message in the thread is unread.\n\n"
-        "After listing all threads, include two final sections:\n"
-        "### Key Actions Needed\n"
-        "- 1-3 bullet points consolidating the most important follow-ups. If none, write '- None.'\n"
-        "### Recommendations\n"
-        "- 1-3 bullet points with suggestions or reminders. If none, write '- None.'\n\n"
-        "Important content rules:\n"
-        "- Use the dataset strictly as evidence. Do not describe the JSON structure or list field names.\n"
-        "- Do not repeat the dataset verbatim or describe its fields. Summarise the latest message content for each thread.\n"
-        "- When information needed for a field is unavailable, state 'Not enough info'.\n"
-        "- Begin your response immediately with the first thread section.\n"
-        "- Do not output JSON or fenced code blocks in your final response.\n\n"
-        "Important formatting rules:\n"
-        "- Respond only with the Markdown described above.\n"
-        "- Do not include explanations, instructions, JSON, or code snippets.\n"
-        "- Avoid fenced code blocks except for the provided JSON dataset.\n\n"
+        "End the report with a short '**Quick glance:**' bullet list highlighting any threads with pending actions for me.\n\n"
         "Message dataset (chronological order, earliest first):\n"
         "```json\n"
         f"{dataset}\n"
@@ -799,61 +618,31 @@ def _invoke_email_summary_llm(system_prompt: str, user_prompt: str, model: Optio
     return None
 
 
-def _fallback_email_summary(
-    threads: List[Dict[str, Any]],
-    script: str,
-    window_info: Optional[Dict[str, Any]],
-) -> str:
-    window = _email_window_label(script, window_info)
-    lines = [f"### 📬 {_escape_md(window)}", ""]
+def _fallback_email_summary(prepared: List[Dict[str, Any]], script: str) -> str:
+    window = _email_window_label(script)
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for item in prepared:
+        key = item.get("canonical_subject") or "(no subject)"
+        grouped.setdefault(key, []).append(item)
 
-    info = window_info or {}
-    meta_fragments: List[str] = []
-    start_display = (info.get("start") or "").strip()
-    end_display = (info.get("end") or "").strip()
-    hours_back = info.get("hours_back")
-
-    if start_display:
-        meta_fragments.append(f"Start: {_escape_md(start_display)}")
-    if end_display:
-        meta_fragments.append(f"End: {_escape_md(end_display)}")
-    if isinstance(hours_back, int) and hours_back > 0:
-        meta_fragments.append(f"Lookback: {hours_back}h")
-
-    if meta_fragments:
-        lines.append("_" + " • ".join(meta_fragments) + "_")
-        lines.append("")
-
-    lines.append("_LLM summary unavailable; raw highlights below._")
-    lines.append("")
-
-    for thread in threads:
-        latest = thread.get("latest_message") or {}
-        subject = thread.get("subjects") or []
-        subject_label = subject[0] if subject else "(No Subject)"
+    lines = [f"### 📬 {window}", "", "_LLM summary unavailable; raw highlights below._", ""]
+    for idx, (_key, items) in enumerate(grouped.items(), start=1):
+        items_sorted = sorted(items, key=lambda entry: entry.get("index", 0))
+        latest = items_sorted[-1]
+        subject = latest.get("subject") or "(No Subject)"
         sender = latest.get("sender") or "Unknown sender"
-        recipients = thread.get("recipients_to", []) + thread.get("recipients_cc", [])
+        recipients = latest.get("recipients_to", []) + latest.get("recipients_cc", [])
         unread_flag = " (unread)" if latest.get("is_unread") else ""
-        lines.append(f"#### Thread {thread.get('thread_id', '?')}: {subject_label}{unread_flag}")
+        lines.append(f"#### Thread {idx}: {subject}{unread_flag}")
         lines.append(f"- Sender: {sender}")
         lines.append(f"- Recipients: {', '.join(recipients) if recipients else 'None listed'}")
-        replies = {
-            entry.get("sender")
-            for entry in thread.get("messages", [])[1:]
-            if entry.get("sender")
-        } - {sender}
+        replies = {entry.get("sender") for entry in items_sorted[1:]} - {sender}
         reply_label = ", ".join(sorted(filter(None, replies))) if replies else "None noted"
         lines.append(f"- Replies: {reply_label}")
         preview = latest.get("body_preview") or "No preview available."
         lines.append(f"- Summary: {preview}")
         lines.append("- My Actions: Unknown")
         lines.append("")
-
-    lines.append("### Key Actions Needed")
-    lines.append("- None.")
-    lines.append("")
-    lines.append("### Recommendations")
-    lines.append("- None.")
 
     return "\n".join(lines).strip()
 
@@ -862,21 +651,19 @@ def _render_email_summary(
     messages: List[Dict[str, Any]],
     script: str,
     model: Optional[str],
-    payload_dict: Optional[Dict[str, Any]],
+    payload_dict: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     prepared = _prepare_email_messages(messages)
-    threads = _aggregate_email_threads(prepared)
-    window_info = _extract_email_window(payload_dict)
-    if not threads:
-        window = _email_window_label(script, window_info)
+    if not prepared:
+        window = _email_window_label(script)
         return f"### 📬 {window}\n\n> No emails were found in this window."
 
     system_prompt = _email_system_prompt()
-    user_prompt = _email_user_prompt(prepared, threads, script, window_info)
+    user_prompt = _email_user_prompt(prepared, script)
     summary = _invoke_email_summary_llm(system_prompt, user_prompt, model)
     if summary:
         return summary
-    return _fallback_email_summary(threads, script, window_info)
+    return _fallback_email_summary(prepared, script)
 
 
 _SELF_IDENTIFIERS: List[str] = []
@@ -1084,22 +871,13 @@ def _format_script_message(
     payload_bytes: bytes,
     *,
     model: Optional[str] = None,
-    suppress_header: bool = False,
 ) -> str:
     decoded = payload_bytes.decode("utf-8", errors="replace").strip()
     heading = f"macOS Actions :: {script}"
 
-    def combine_output(body_text: str) -> str:
-        body_clean = (body_text or "").strip()
-        if suppress_header or not heading:
-            return body_clean or heading
-        if body_clean:
-            return f"{heading}\n\n{body_clean}"
-        return heading
-
     if status != 200:
         details = decoded or "No details provided."
-        return combine_output(f"(HTTP {status})\n\n{details}")
+        return f"{heading} (HTTP {status})\n\n{details}"
 
     if "json" in (mimetype or "").lower():
         try:
@@ -1112,19 +890,6 @@ def _format_script_message(
             parsed = data.get("parsed")
             stdout = data.get("stdout")
             stderr = data.get("stderr")
-
-            if script in {"morning_briefing", "afternoon_briefing"} and isinstance(parsed, dict):
-                markdown = parsed.get("markdown")
-                if not isinstance(markdown, str):
-                    markdown = stdout or json.dumps(parsed, indent=2, ensure_ascii=False)
-                if stderr:
-                    markdown = f"{markdown}\n\n[stderr]\n{stderr}"
-                title = parsed.get("title")
-                if isinstance(title, str) and title.strip():
-                    heading = title.strip()
-                if not ok_flag:
-                    heading = f"{heading} (failed)"
-                return combine_output(markdown)
 
             if script in {"fetch_yesterday_emails", "fetch_weekend_emails", "unread_last_hour"}:
                 payload_dict: Optional[Dict[str, Any]] = parsed if isinstance(parsed, dict) else None
@@ -1155,7 +920,7 @@ def _format_script_message(
                     summary_text = f"{summary_text}\n\n[stderr]\n{stderr}"
                 if not ok_flag:
                     heading = f"{heading} (failed)"
-                return combine_output(summary_text)
+                return f"{heading}\n\n{summary_text}"
 
             if script in {"meetings_today", "meetings_today_detail"} and isinstance(parsed, dict):
                 payload_ok = parsed.get("ok", True)
@@ -1163,15 +928,14 @@ def _format_script_message(
                     error_body = parsed.get("error") or stdout or json.dumps(data, indent=2, ensure_ascii=False)
                     if stderr:
                         error_body = f"{error_body}\n\n[stderr]\n{stderr}"
-                    heading_failed = f"{heading} (failed)"
-                    heading = heading_failed
-                    return combine_output(error_body)
+                    return f"{heading} (failed)\n\n{error_body}"
 
                 if script == "meetings_today":
                     events = parsed.get("events") or []
                     start_iso = parsed.get("start_filter") if isinstance(parsed, dict) else None
                     start_label = parsed.get("start_filter_label") if isinstance(parsed, dict) else None
-                    return combine_output(_render_meetings_summary(events, start_iso, start_label))
+                    rendered = _render_meetings_summary(events, start_iso, start_label)
+                    return f"{heading}\n\n{rendered}"
 
                 event_detail = _extract_event(parsed)
                 if not isinstance(event_detail, dict):
@@ -1193,8 +957,8 @@ def _format_script_message(
                         event_detail = _extract_event(stdout_payload)
 
                 if isinstance(event_detail, dict):
-                    return combine_output(_render_meeting_detail(event_detail))
-                return combine_output("_No meeting detail available._")
+                    return f"{heading}\n\n{_render_meeting_detail(event_detail)}"
+                return f"{heading}\n\n_No meeting detail available._"
 
             if parsed is not None:
                 body = _pretty(parsed)
@@ -1209,10 +973,10 @@ def _format_script_message(
             if not ok_flag:
                 heading = f"{heading} (failed)"
 
-            return combine_output(body.strip() or "[no output]")
+            return f"{heading}\n\n{body.strip() or '[no output]'}"
 
     body_text = decoded or "[no output]"
-    return combine_output(body_text)
+    return f"{heading}\n\n{body_text}"
 
 
 def _chat_response(content: str, model: Optional[str]) -> Response:
