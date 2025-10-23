@@ -527,13 +527,118 @@ def _prepare_email_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, An
     return prepared
 
 
-def _email_window_label(script: str) -> str:
+def _aggregate_email_threads(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, Dict[str, Any]] = {}
+
+    for item in messages:
+        canonical = item.get("canonical_subject") or "(no subject)"
+        bucket = grouped.get(canonical)
+        if not bucket:
+            bucket = {
+                "canonical_subject": canonical,
+                "subjects": [],
+                "messages": [],
+                "participants": set(),
+                "senders": set(),
+                "recipients_to": set(),
+                "recipients_cc": set(),
+                "mailboxes": set(),
+                "has_unread": False,
+                "latest_message": None,
+                "latest_index": -1,
+            }
+            grouped[canonical] = bucket
+
+        subject_value = item.get("subject")
+        if subject_value and subject_value not in bucket["subjects"]:
+            bucket["subjects"].append(subject_value)
+
+        sender_value = item.get("sender") or ""
+        if sender_value:
+            bucket["senders"].add(sender_value)
+            bucket["participants"].add(sender_value)
+
+        for recipient in item.get("recipients_to") or []:
+            if recipient:
+                bucket["recipients_to"].add(recipient)
+                bucket["participants"].add(recipient)
+        for recipient in item.get("recipients_cc") or []:
+            if recipient:
+                bucket["recipients_cc"].add(recipient)
+                bucket["participants"].add(recipient)
+
+        mailbox_value = item.get("mailbox") or ""
+        if mailbox_value:
+            bucket["mailboxes"].add(mailbox_value)
+
+        if item.get("is_unread"):
+            bucket["has_unread"] = True
+
+        message_entry = {
+            "index": item.get("index"),
+            "sender": sender_value,
+            "recipients_to": item.get("recipients_to") or [],
+            "recipients_cc": item.get("recipients_cc") or [],
+            "date_received": item.get("date_received") or "",
+            "body_preview": item.get("body_preview") or "",
+            "is_unread": item.get("is_unread", False),
+        }
+        bucket["messages"].append(message_entry)
+
+        try:
+            idx_numeric = int(item.get("index") or 0)
+        except (TypeError, ValueError):
+            idx_numeric = len(bucket["messages"])
+        if idx_numeric >= bucket["latest_index"]:
+            bucket["latest_index"] = idx_numeric
+            bucket["latest_message"] = message_entry
+
+    ordered_threads: List[Dict[str, Any]] = []
+    for ordinal, (_, bucket) in enumerate(
+        sorted(grouped.items(), key=lambda pair: pair[1]["latest_index"], reverse=True), start=1
+    ):
+        latest_message = bucket["latest_message"] or {}
+        ordered_threads.append(
+            {
+                "thread_id": ordinal,
+                "canonical_subject": bucket["canonical_subject"],
+                "subjects": sorted(bucket["subjects"]),
+                "messages": bucket["messages"],
+                "messages_count": len(bucket["messages"]),
+                "participants": sorted(bucket["participants"]),
+                "senders": sorted(bucket["senders"]),
+                "recipients_to": sorted(bucket["recipients_to"]),
+                "recipients_cc": sorted(bucket["recipients_cc"]),
+                "mailboxes": sorted(bucket["mailboxes"]),
+                "has_unread": bucket["has_unread"],
+                "latest_message": latest_message,
+            }
+        )
+
+    return ordered_threads
+
+
+def _email_window_label(script: str, window_info: Optional[Dict[str, Any]] = None) -> str:
     labels = {
         "fetch_yesterday_emails": "Yesterday's Unread Emails",
         "fetch_weekend_emails": "Weekend Emails",
         "unread_last_hour": "Last Hour Unread Emails",
     }
-    return labels.get(script, "Email Digest")
+    base = labels.get(script, "Email Digest")
+    info = window_info or {}
+
+    hours_back = info.get("hours_back")
+    if isinstance(hours_back, int) and hours_back > 0:
+        return f"{base} (last {hours_back}h)"
+
+    start = (info.get("start") or "").strip()
+    end = (info.get("end") or "").strip()
+
+    if start and end:
+        return f"{base} ({start} → {end})"
+    if start:
+        return f"{base} (since {start})"
+    return base
 
 
 def _email_system_prompt() -> str:
@@ -543,29 +648,49 @@ def _email_system_prompt() -> str:
     )
 
 
-def _email_user_prompt(prepared: List[Dict[str, Any]], script: str) -> str:
-    window = _email_window_label(script)
+def _email_user_prompt(
+    threads: List[Dict[str, Any]],
+    script: str,
+    window_info: Optional[Dict[str, Any]],
+) -> str:
+    window = _email_window_label(script, window_info)
     if _SELF_IDENTIFIERS:
         me_label = ", ".join(_SELF_IDENTIFIERS)
     else:
         me_label = "Not provided"
 
-    dataset = json.dumps(prepared, indent=2, ensure_ascii=False)
+    info = window_info or {}
+    start_desc = (info.get("start_raw") or info.get("start") or "").strip()
+    end_desc = (info.get("end_raw") or info.get("end") or "").strip()
+    hours_back = info.get("hours_back")
+
+    window_details: List[str] = []
+    if start_desc:
+        window_details.append(f"start: {start_desc}")
+    if end_desc:
+        window_details.append(f"end: {end_desc}")
+    if isinstance(hours_back, int) and hours_back > 0:
+        window_details.append(f"lookback_hours: {hours_back}")
+    if not window_details:
+        window_details = ["start: midnight today (local)", "end: now (local)"]
+
+    dataset = json.dumps(threads, indent=2, ensure_ascii=False)
+    window_lines = "\n".join(f"- {detail}" for detail in window_details)
     instructions = (
         f"Window: {window}\n"
+        f"{window_lines}\n"
         f"My identifiers: {me_label}\n\n"
         "Instructions:\n"
-        "- Group messages into threads representing the same conversation. Use canonical_subject as a hint;\n"
-        "  merge messages that clearly belong together, even if the subject varies slightly (e.g., RE/FW prefixes).\n"
+        "- The data already contains one record per thread. Iterate through the `threads` array in order.\n"
         "- For each thread produce Markdown exactly in this structure:\n"
         "#### Thread {n}: {thread title}\n"
         "- Sender: person who authored the latest email directed at me.\n"
         "- Recipients: unique To + Cc recipients (comma separated).\n"
-        "- Replies: participants who replied after the original sender. Include me if sender_is_me is true on any entry beyond the first message.\n"
-        "- Summary: 1-3 sentences capturing the current state or decisions in the thread. Mention if any message preview lacks detail (say 'Summary: Not enough info').\n"
+        "- Replies: participants who replied after the original sender (excluding the original sender). Include me if I replied.\n"
+        "- Summary: 1-3 sentences capturing the current state or decisions in the thread. Mention if any message preview lacks detail (say 'Not enough info').\n"
         "- My Actions: concrete follow-ups expected of me. If none, respond with 'None'.\n"
         "- Note if the latest message in the thread is unread.\n\n"
-        "End the report with a short '**Quick glance:**' bullet list highlighting any threads with pending actions for me.\n\n"
+        "After listing all threads, add the section '### Quick glance' with 1-3 bullet highlights (or '- None.').\n\n"
         "Message dataset (chronological order, earliest first):\n"
         "```json\n"
         f"{dataset}\n"
@@ -618,25 +743,28 @@ def _invoke_email_summary_llm(system_prompt: str, user_prompt: str, model: Optio
     return None
 
 
-def _fallback_email_summary(prepared: List[Dict[str, Any]], script: str) -> str:
-    window = _email_window_label(script)
-    grouped: Dict[str, List[Dict[str, Any]]] = {}
-    for item in prepared:
-        key = item.get("canonical_subject") or "(no subject)"
-        grouped.setdefault(key, []).append(item)
-
+def _fallback_email_summary(
+    threads: List[Dict[str, Any]],
+    script: str,
+    window_info: Optional[Dict[str, Any]],
+) -> str:
+    window = _email_window_label(script, window_info)
     lines = [f"### 📬 {window}", "", "_LLM summary unavailable; raw highlights below._", ""]
-    for idx, (_key, items) in enumerate(grouped.items(), start=1):
-        items_sorted = sorted(items, key=lambda entry: entry.get("index", 0))
-        latest = items_sorted[-1]
-        subject = latest.get("subject") or "(No Subject)"
+
+    for thread in threads:
+        latest = thread.get("latest_message") or {}
+        subject = (thread.get("subjects") or ["(No Subject)"])[0]
         sender = latest.get("sender") or "Unknown sender"
-        recipients = latest.get("recipients_to", []) + latest.get("recipients_cc", [])
+        recipients = thread.get("recipients_to", []) + thread.get("recipients_cc", [])
         unread_flag = " (unread)" if latest.get("is_unread") else ""
-        lines.append(f"#### Thread {idx}: {subject}{unread_flag}")
+        lines.append(f"#### Thread {thread.get('thread_id', '?')}: {subject}{unread_flag}")
         lines.append(f"- Sender: {sender}")
         lines.append(f"- Recipients: {', '.join(recipients) if recipients else 'None listed'}")
-        replies = {entry.get("sender") for entry in items_sorted[1:]} - {sender}
+        replies = {
+            entry.get("sender")
+            for entry in thread.get("messages", [])[1:]
+            if entry.get("sender")
+        } - {sender}
         reply_label = ", ".join(sorted(filter(None, replies))) if replies else "None noted"
         lines.append(f"- Replies: {reply_label}")
         preview = latest.get("body_preview") or "No preview available."
@@ -644,6 +772,8 @@ def _fallback_email_summary(prepared: List[Dict[str, Any]], script: str) -> str:
         lines.append("- My Actions: Unknown")
         lines.append("")
 
+    lines.append("### Quick glance")
+    lines.append("- None.")
     return "\n".join(lines).strip()
 
 
@@ -654,16 +784,18 @@ def _render_email_summary(
     payload_dict: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     prepared = _prepare_email_messages(messages)
-    if not prepared:
-        window = _email_window_label(script)
+    threads = _aggregate_email_threads(prepared)
+    window_info = _extract_email_window(payload_dict)
+    if not threads:
+        window = _email_window_label(script, window_info)
         return f"### 📬 {window}\n\n> No emails were found in this window."
 
     system_prompt = _email_system_prompt()
-    user_prompt = _email_user_prompt(prepared, script)
+    user_prompt = _email_user_prompt(threads, script, window_info)
     summary = _invoke_email_summary_llm(system_prompt, user_prompt, model)
     if summary:
         return summary
-    return _fallback_email_summary(prepared, script)
+    return _fallback_email_summary(threads, script, window_info)
 
 
 _SELF_IDENTIFIERS: List[str] = []
