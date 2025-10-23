@@ -117,7 +117,7 @@ def _run_briefing(script: str, payload: Optional[Dict[str, Any]]) -> Tuple[int, 
     if kind == "morning_briefing":
         components = [
             ("meetings_today", None),
-            ("unread_last_hour", None),
+            ("fetch_yesterday_emails", None),
         ]
         title = "### 🌅 Morning Briefing"
     elif kind == "afternoon_briefing":
@@ -741,7 +741,8 @@ def _email_user_prompt(
         "- Use the dataset strictly as evidence. Do not describe the JSON structure or list field names.\n"
         "- Do not repeat the dataset verbatim or describe its fields. Summarise the latest message content for each thread.\n"
         "- When information needed for a field is unavailable, state 'Not enough info'.\n"
-        "- Begin your response immediately with the first thread section.\n\n"
+        "- Begin your response immediately with the first thread section.\n"
+        "- Do not output JSON or fenced code blocks in your final response.\n\n"
         "Important formatting rules:\n"
         "- Respond only with the Markdown described above.\n"
         "- Do not include explanations, instructions, JSON, or code snippets.\n"
